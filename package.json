@@ -1,0 +1,15 @@
+{
+  "name": "spark",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@liminal-hq/plugin-desktop-integration": "^0.1.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  }
+}
