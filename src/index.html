@@ -10,15 +10,22 @@
 
   <body>
     <main class="card">
+      <header class="editor-header">
+        <span class="editor-title">速记</span>
+        <span id="word-count" class="word-count"></span>
+      </header>
       <textarea
         id="note-input"
-        placeholder="记点什么…"
+        placeholder="记点什么…&#10;&#10;Enter 换行，Ctrl+Enter 保存"
         autocomplete="off"
         spellcheck="false"
         autofocus
       ></textarea>
+      <footer class="editor-footer">
+        <span class="hint">Alt+Q 速记 · Alt+Z 历史 · Esc 收起</span>
+        <button id="save-btn" class="save-btn" title="Ctrl+Enter">保存</button>
+      </footer>
       <div id="status" class="status" role="status"></div>
-      <div class="hint">Alt+Q 速记 · Alt+Z 历史 · Enter 保存 · Shift+Enter 换行 · Esc 取消</div>
     </main>
   </body>
 </html>

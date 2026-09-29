@@ -20,8 +20,11 @@ const SESSION_DESCRIPTION_HISTORY: &str = "Spark 历史记录";
 const APP_DIR: &str = "spark";
 const NOTES_FILE: &str = "notes.jsonl";
 /// 主窗口逻辑尺寸（须与 tauri.conf.json 保持一致）
-const WIN_W: f64 = 480.0;
-const WIN_H: f64 = 140.0;
+const WIN_W: f64 = 400.0;
+const WIN_H: f64 = 450.0;
+/// 主窗口最小尺寸（须与 tauri.conf.json 保持一致）
+const WIN_MIN_W: f64 = 320.0;
+const WIN_MIN_H: f64 = 260.0;
 /// 显示后的最小可见时长：忽略此窗口期内的失焦事件，
 /// 避免 show/focus 事件乱序导致窗口刚弹出就被收起
 const MIN_VISIBLE: Duration = Duration::from_millis(250);
@@ -295,7 +298,7 @@ pub fn run() {
             #[cfg(desktop)]
             setup_tray(app.handle())?;
 
-            // WebKitGTK 的内容最小尺寸会把 480x140 撑到 480x200：
+            // WebKitGTK 的内容最小尺寸会撑大窗口：
             // 1) 重置 webview widget 的 size request，消除内容最小尺寸下限
             // 2) 显式收紧窗口最小约束并回到配置尺寸
             if let Some(win) = app.get_webview_window("main") {
@@ -303,7 +306,8 @@ pub fn run() {
                     use gtk::prelude::WidgetExt;
                     webview.inner().set_size_request(1, 1);
                 });
-                let _ = win.set_min_size(Some(tauri::LogicalSize::new(240.0, 80.0)));
+                let _ = win.set_maximizable(false);
+                let _ = win.set_min_size(Some(tauri::LogicalSize::new(WIN_MIN_W, WIN_MIN_H)));
                 let _ = win.set_size(tauri::LogicalSize::new(WIN_W, WIN_H));
             }
 
