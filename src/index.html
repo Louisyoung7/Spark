@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="styles.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Spark</title>
+    <script type="module" src="/main.js" defer></script>
+  </head>
+
+  <body>
+    <main class="card">
+      <textarea
+        id="note-input"
+        placeholder="记点什么…"
+        autocomplete="off"
+        spellcheck="false"
+        autofocus
+      ></textarea>
+      <div id="status" class="status" role="status"></div>
+      <div class="hint">Alt+Q 速记 · Alt+Z 历史 · Enter 保存 · Shift+Enter 换行 · Esc 取消</div>
+    </main>
+  </body>
+</html>
