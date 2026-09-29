@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="styles.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Spark 历史记录</title>
+    <script type="module" src="/history.js" defer></script>
+  </head>
+
+  <body>
+    <main class="history-card">
+      <header class="history-header">
+        <span class="history-title">历史记录</span>
+        <span id="count" class="history-count"></span>
+        <button id="close-btn" class="icon-btn" title="关闭 (Esc)">✕</button>
+      </header>
+      <div id="note-list" class="history-list"></div>
+      <div id="empty" class="history-empty hidden">
+        还没有记录<br /><span class="dim">按 Alt+Q 写下第一条速记</span>
+      </div>
+      <div id="toast" class="history-toast"></div>
+    </main>
+  </body>
+</html>
