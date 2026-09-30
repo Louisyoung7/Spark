@@ -448,6 +448,34 @@ fn set_notes_path(app: AppHandle, path: Option<String>) -> Result<(), String> {
     Ok(())
 }
 
+/// 保存自定义快捷键。`null` 表示恢复默认；新值需重启应用生效
+/// （X11 全局快捷键插件支持热更，但 desktop-integration 插件统一管理，
+/// 改动 Wayland Portal 会话需要重启；为一致性两侧均重启生效）
+#[tauri::command]
+fn set_hotkeys(
+    app: AppHandle,
+    hotkey_main: Option<String>,
+    hotkey_history: Option<String>,
+) -> Result<(), String> {
+    // 基础校验：空字符串视为 null
+    let hotkey_main = hotkey_main.and_then(non_empty);
+    let hotkey_history = hotkey_history.and_then(non_empty);
+    set_settings(&app, |g| {
+        g.hotkey_main = hotkey_main;
+        g.hotkey_history = hotkey_history;
+    })?;
+    Ok(())
+}
+
+fn non_empty(s: String) -> Option<String> {
+    let t = s.trim();
+    if t.is_empty() {
+        None
+    } else {
+        Some(t.to_string())
+    }
+}
+
 /// 极简系统托盘：「显示窗口」/「历史记录」/「设置」/「退出」；左键点击 toggle 速记窗口。
 #[cfg(desktop)]
 fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
@@ -590,6 +618,7 @@ pub fn run() {
             set_autostart,
             pick_notes_path,
             set_notes_path,
+            set_hotkeys,
             open_settings
         ])
         .run(tauri::generate_context!())

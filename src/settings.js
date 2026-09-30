@@ -104,3 +104,41 @@ els.resetPathBtn.addEventListener("click", async () => {
     flashStatus(`重置失败：${err}`, true);
   }
 });
+
+// ===== 自定义快捷键 =====
+// 失焦或回车时保存；空字符串视为恢复默认
+function currentMainInput() {
+  const v = els.hotkeyMain.value.trim();
+  return v === "" ? null : v;
+}
+function currentHistoryInput() {
+  const v = els.hotkeyHistory.value.trim();
+  return v === "" ? null : v;
+}
+
+async function saveHotkeys() {
+  try {
+    await invoke("set_hotkeys", {
+      hotkeyMain: currentMainInput(),
+      hotkeyHistory: currentHistoryInput(),
+    });
+    flashStatus("已保存，重启后生效");
+  } catch (err) {
+    flashStatus(`保存失败：${err}`, true);
+  }
+}
+
+els.hotkeyMain.addEventListener("blur", saveHotkeys);
+els.hotkeyHistory.addEventListener("blur", saveHotkeys);
+els.hotkeyMain.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    els.hotkeyMain.blur();
+  }
+});
+els.hotkeyHistory.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    els.hotkeyHistory.blur();
+  }
+});
