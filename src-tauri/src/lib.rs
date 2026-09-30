@@ -5,9 +5,10 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, WindowEvent};
+use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_desktop_integration::DesktopIntegrationExt;
 
-/// 全局快捷键（常量，可按需修改）
+/// 全局快捷键（默认；可被 settings.json 覆盖）
 const HOTKEY_MAIN: &str = "Alt+Q"; // 唤出速记窗口
 const HOTKEY_HISTORY: &str = "Alt+Z"; // 唤出历史记录窗口
 /// Wayland Portal 会话 ID（稳定标识；X11 下忽略）
@@ -19,6 +20,7 @@ const SESSION_DESCRIPTION_HISTORY: &str = "Spark 历史记录";
 /// 数据目录：~/.local/share/spark/
 const APP_DIR: &str = "spark";
 const NOTES_FILE: &str = "notes.jsonl";
+const SETTINGS_FILE: &str = "settings.json";
 /// 主窗口逻辑尺寸（须与 tauri.conf.json 保持一致）
 const WIN_W: f64 = 400.0;
 const WIN_H: f64 = 450.0;
@@ -33,17 +35,109 @@ const MIN_VISIBLE: Duration = Duration::from_millis(250);
 #[derive(Default)]
 struct LastShownAt(Mutex<Option<Instant>>);
 
-/// 笔记文件路径：~/.local/share/spark/notes.jsonl
-fn notes_path(app: &AppHandle) -> Result<PathBuf, String> {
+/// 用户可配置项持久化在 `~/.local/share/spark/settings.json`。
+/// Option 字段：None = 使用内置默认。
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+struct AppSettings {
+    #[serde(default)]
+    autostart: bool,
+    #[serde(default)]
+    notes_path: Option<PathBuf>,
+    #[serde(default)]
+    hotkey_main: Option<String>,
+    #[serde(default)]
+    hotkey_history: Option<String>,
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            autostart: false,
+            notes_path: None,
+            hotkey_main: None,
+            hotkey_history: None,
+        }
+    }
+}
+
+/// 全局共享的设置状态。启动时一次性从磁盘加载，写入时持久化。
+#[derive(Default)]
+struct SettingsState(Mutex<AppSettings>);
+
+fn settings_path(app: &AppHandle) -> Result<PathBuf, String> {
     let home = app.path().home_dir().map_err(|e| e.to_string())?;
     Ok(home
         .join(".local")
         .join("share")
         .join(APP_DIR)
-        .join(NOTES_FILE))
+        .join(SETTINGS_FILE))
 }
 
-/// 追加一条速记到 `~/.local/share/spark/notes.jsonl`（JSON Lines）。
+#[allow(dead_code)] // 后续 commit 会调用
+fn load_settings(app: &AppHandle) -> AppSettings {
+    let Ok(path) = settings_path(app) else {
+        return AppSettings::default();
+    };
+    if !path.exists() {
+        return AppSettings::default();
+    }
+    fs::read_to_string(&path)
+        .ok()
+        .and_then(|t| serde_json::from_str::<AppSettings>(&t).ok())
+        .unwrap_or_default()
+}
+
+#[allow(dead_code)] // 后续 commit 会调用
+fn save_settings(app: &AppHandle, s: &AppSettings) -> Result<(), String> {
+    let path = settings_path(app)?;
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir).map_err(|e| format!("创建目录失败: {e}"))?;
+    }
+    let json = serde_json::to_string_pretty(s).map_err(|e| format!("序列化失败: {e}"))?;
+    // 临时文件 + 原子替换，避免写一半崩溃损坏配置
+    let tmp = path.with_extension("json.tmp");
+    fs::write(&tmp, json).map_err(|e| format!("写入失败: {e}"))?;
+    fs::rename(&tmp, &path).map_err(|e| format!("替换失败: {e}"))?;
+    Ok(())
+}
+
+fn settings_snapshot(app: &AppHandle) -> AppSettings {
+    app.try_state::<SettingsState>()
+        .and_then(|s| s.0.lock().ok().map(|g| g.clone()))
+        .unwrap_or_default()
+}
+
+#[allow(dead_code)] // 后续 commit 会调用
+fn set_settings<F>(app: &AppHandle, mutate: F) -> Result<AppSettings, String>
+where
+    F: FnOnce(&mut AppSettings),
+{
+    let state = app.state::<SettingsState>();
+    let mut g = state.0.lock().map_err(|e| format!("锁定设置失败: {e}"))?;
+    mutate(&mut g);
+    save_settings(app, &g)?;
+    Ok(g.clone())
+}
+
+/// 笔记文件路径：自定义优先；缺省时返回默认路径
+fn notes_path(app: &AppHandle) -> Result<PathBuf, String> {
+    if let Some(custom) = settings_snapshot(app).notes_path {
+        return Ok(custom);
+    }
+    let home = app.path().home_dir().map_err(|e| e.to_string())?;
+    Ok(home.join(".local").join("share").join(APP_DIR).join(NOTES_FILE))
+}
+
+fn default_notes_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let home = app.path().home_dir().map_err(|e| e.to_string())?;
+    Ok(home.join(".local").join("share").join(APP_DIR).join(NOTES_FILE))
+}
+
+fn effective_hotkey(custom: Option<String>, default: &str) -> String {
+    custom.unwrap_or_else(|| default.to_string())
+}
+
+/// 追加一条速记到当前笔记文件（JSON Lines）。
 #[tauri::command]
 fn save_note(app: AppHandle, content: String) -> Result<(), String> {
     // 去掉首尾空白；内部换行保留（serde_json 会转义为 \n，JSONL 每条仍是单行）
@@ -171,8 +265,7 @@ fn show_main_window(app: &AppHandle) {
     let Some(win) = app.get_webview_window("main") else {
         return;
     };
-    eprintln!("[spark {:?}] show_main_window: visible_before={}", std::time::Instant::now(), win.is_visible().unwrap_or(false));
-    // 记录显示时刻，供“点击窗口外收起”防抖
+    // 记录显示时刻，供"点击窗口外收起"防抖
     if let Some(state) = app.try_state::<LastShownAt>() {
         if let Ok(mut g) = state.0.lock() {
             *g = Some(Instant::now());
@@ -190,7 +283,6 @@ fn show_main_window(app: &AppHandle) {
         }
     }
     let _ = win.show();
-    eprintln!("[spark {:?}] window shown", std::time::Instant::now());
     // X11: 盖 _NET_WM_USER_TIME 时间戳并 gtk present_with_time，
     // 让窗口管理器把弹窗当作用户驱动的激活（拿到焦点）；Wayland: 无操作
     app.request_desktop_activation_assist(&win, "spark-show", "main");
@@ -240,7 +332,78 @@ fn toggle_history_window(app: &AppHandle) {
     }
 }
 
-/// 极简系统托盘：「显示窗口」/「历史记录」/「退出」；左键点击 toggle 窗口。
+/// 显示设置窗口并通知前端刷新。
+fn show_settings_window(app: &AppHandle) {
+    let Some(win) = app.get_webview_window("settings") else {
+        return;
+    };
+    if win.is_minimized().unwrap_or(false) {
+        let _ = win.unminimize();
+    }
+    let _ = win.show();
+    app.request_desktop_activation_assist(&win, "spark-settings-show", "settings");
+    let _ = win.set_focus();
+    let _ = app.emit("reload-settings", ());
+}
+
+/// 设置窗口 toggle：已显示 → 隐藏；隐藏 → 显示。
+fn toggle_settings_window(app: &AppHandle) {
+    let Some(win) = app.get_webview_window("settings") else {
+        return;
+    };
+    if win.is_visible().unwrap_or(false) {
+        let _ = win.hide();
+    } else {
+        show_settings_window(app);
+    }
+}
+
+/// 前端可调用的统一入口（托盘和历史小图标都走这里）
+#[tauri::command]
+fn open_settings(app: AppHandle) {
+    show_settings_window(&app);
+}
+
+/// 当前生效设置 + 默认值快照（供设置界面展示）
+#[derive(serde::Serialize)]
+struct SettingsView {
+    autostart: bool,
+    autostart_supported: bool,
+    notes_path: String,
+    notes_path_default: String,
+    notes_path_is_default: bool,
+    hotkey_main: String,
+    hotkey_main_default: String,
+    hotkey_main_custom: Option<String>,
+    hotkey_history: String,
+    hotkey_history_default: String,
+    hotkey_history_custom: Option<String>,
+}
+
+#[tauri::command]
+fn get_settings(app: AppHandle) -> Result<SettingsView, String> {
+    let s = settings_snapshot(&app);
+    let cur_notes = notes_path(&app)?.to_string_lossy().to_string();
+    let def_notes = default_notes_path(&app)?.to_string_lossy().to_string();
+    let autostart_enabled = app.autolaunch().is_enabled().unwrap_or(false);
+    let supported = cfg!(any(target_os = "linux", target_os = "macos", target_os = "windows"));
+
+    Ok(SettingsView {
+        autostart: autostart_enabled,
+        autostart_supported: supported,
+        notes_path: cur_notes,
+        notes_path_default: def_notes,
+        notes_path_is_default: s.notes_path.is_none(),
+        hotkey_main: effective_hotkey(s.hotkey_main.clone(), HOTKEY_MAIN),
+        hotkey_main_default: HOTKEY_MAIN.to_string(),
+        hotkey_main_custom: s.hotkey_main.clone(),
+        hotkey_history: effective_hotkey(s.hotkey_history.clone(), HOTKEY_HISTORY),
+        hotkey_history_default: HOTKEY_HISTORY.to_string(),
+        hotkey_history_custom: s.hotkey_history.clone(),
+    })
+}
+
+/// 极简系统托盘：「显示窗口」/「历史记录」/「设置」/「退出」；左键点击 toggle 速记窗口。
 #[cfg(desktop)]
 fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     use tauri::menu::{Menu, MenuItem};
@@ -248,8 +411,9 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
 
     let show_item = MenuItem::with_id(app, "show", "显示窗口", true, None::<&str>)?;
     let history_item = MenuItem::with_id(app, "history", "历史记录", true, None::<&str>)?;
+    let settings_item = MenuItem::with_id(app, "settings", "设置", true, None::<&str>)?;
     let quit_item = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show_item, &history_item, &quit_item])?;
+    let menu = Menu::with_items(app, &[&show_item, &history_item, &settings_item, &quit_item])?;
 
     let icon = app
         .default_window_icon()
@@ -264,6 +428,7 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show" => toggle_main_window(app),
             "history" => toggle_history_window(app),
+            "settings" => toggle_settings_window(app),
             "quit" => app.exit(0),
             _ => {}
         })
@@ -292,8 +457,14 @@ pub fn run() {
         .plugin(tauri_plugin_desktop_integration::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_xdg_portal::init())
+        // 开机自启：Linux 写 ~/.config/autostart/spark.desktop
+        .plugin(tauri_plugin_autostart::init(
+            MacosLauncher::LaunchAgent,
+            Some(vec!["--silent"]),
+        ))
         .setup(|app| {
             app.manage(LastShownAt::default());
+            app.manage(SettingsState(Mutex::new(load_settings(app.handle()))));
 
             #[cfg(desktop)]
             setup_tray(app.handle())?;
@@ -311,19 +482,23 @@ pub fn run() {
                 let _ = win.set_size(tauri::LogicalSize::new(WIN_W, WIN_H));
             }
 
+            let snapshot = settings_snapshot(app.handle());
             let handle = app.handle().clone();
             let cb_handle = handle.clone();
-            handle.register_shortcut(SESSION_ID, SESSION_DESCRIPTION, HOTKEY_MAIN, move || {
+            let hk_main = effective_hotkey(snapshot.hotkey_main.clone(), HOTKEY_MAIN);
+            handle.register_shortcut(SESSION_ID, SESSION_DESCRIPTION, &hk_main, move || {
                 toggle_main_window(&cb_handle);
             });
             let cb_handle_history = handle.clone();
+            let hk_history =
+                effective_hotkey(snapshot.hotkey_history.clone(), HOTKEY_HISTORY);
             // 注：X11 下两个快捷键均可直接注册；Wayland Portal 路径下
             // desktop-integration 插件当前仅支持单快捷键会话，第二个注册
             // 会覆盖第一个的绑定状态，Wayland 环境以历史窗口快捷键为准。
             handle.register_shortcut(
                 SESSION_ID_HISTORY,
                 SESSION_DESCRIPTION_HISTORY,
-                HOTKEY_HISTORY,
+                &hk_history,
                 move || {
                     toggle_history_window(&cb_handle_history);
                 },
@@ -338,13 +513,12 @@ pub fn run() {
                     let _ = window.hide();
                 }
                 // 点击窗口外（失焦）→ 收起【速记窗口】，保留草稿（等同 Esc）。
-                // 历史窗口不自动收起，避免查阅/复制时切到其他应用就被关闭。
+                // 历史 / 设置窗口不自动收起。
                 // IME 候选窗是 override-redirect 窗口，不会触发顶层失焦，不影响中文输入。
                 WindowEvent::Focused(false) => {
                     if window.label() != "main" {
                         return;
                     }
-                    eprintln!("[spark {:?}] Focused(false): visible={}", std::time::Instant::now(), window.is_visible().unwrap_or(false));
                     let guard_passed = window
                         .app_handle()
                         .try_state::<LastShownAt>()
@@ -357,12 +531,8 @@ pub fn run() {
                         })
                         .unwrap_or(true);
                     if guard_passed && window.is_visible().unwrap_or(false) {
-                        eprintln!("[spark {:?}] blur-hide triggered", std::time::Instant::now());
                         let _ = window.hide();
                     }
-                }
-                WindowEvent::Focused(true) => {
-                    eprintln!("[spark {:?}] Focused(true)", std::time::Instant::now());
                 }
                 _ => {}
             }
@@ -370,7 +540,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             save_note,
             list_notes,
-            delete_note
+            delete_note,
+            get_settings,
+            open_settings
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
