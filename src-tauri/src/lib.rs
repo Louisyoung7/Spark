@@ -73,7 +73,6 @@ fn settings_path(app: &AppHandle) -> Result<PathBuf, String> {
         .join(SETTINGS_FILE))
 }
 
-#[allow(dead_code)] // 后续 commit 会调用
 fn load_settings(app: &AppHandle) -> AppSettings {
     let Ok(path) = settings_path(app) else {
         return AppSettings::default();
@@ -87,7 +86,6 @@ fn load_settings(app: &AppHandle) -> AppSettings {
         .unwrap_or_default()
 }
 
-#[allow(dead_code)] // 后续 commit 会调用
 fn save_settings(app: &AppHandle, s: &AppSettings) -> Result<(), String> {
     let path = settings_path(app)?;
     if let Some(dir) = path.parent() {
@@ -107,7 +105,6 @@ fn settings_snapshot(app: &AppHandle) -> AppSettings {
         .unwrap_or_default()
 }
 
-#[allow(dead_code)] // 后续 commit 会调用
 fn set_settings<F>(app: &AppHandle, mutate: F) -> Result<AppSettings, String>
 where
     F: FnOnce(&mut AppSettings),
@@ -403,6 +400,19 @@ fn get_settings(app: AppHandle) -> Result<SettingsView, String> {
     })
 }
 
+/// 切换登录自启；同时把目标态持久化到 settings.json（保持与插件状态一致）
+#[tauri::command]
+fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let autolaunch = app.autolaunch();
+    if enabled {
+        autolaunch.enable().map_err(|e| format!("启用失败: {e}"))?;
+    } else {
+        autolaunch.disable().map_err(|e| format!("禁用失败: {e}"))?;
+    }
+    set_settings(&app, |g| g.autostart = enabled)?;
+    Ok(())
+}
+
 /// 极简系统托盘：「显示窗口」/「历史记录」/「设置」/「退出」；左键点击 toggle 速记窗口。
 #[cfg(desktop)]
 fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
@@ -542,6 +552,7 @@ pub fn run() {
             list_notes,
             delete_note,
             get_settings,
+            set_autostart,
             open_settings
         ])
         .run(tauri::generate_context!())

@@ -68,3 +68,16 @@ window.addEventListener("keydown", (e) => {
     appWindow.hide();
   }
 });
+
+// ===== 开机自启 =====
+els.autostartToggle.addEventListener("change", async () => {
+  const want = els.autostartToggle.checked;
+  try {
+    await invoke("set_autostart", { enabled: want });
+    flashStatus(want ? "已启用开机自启" : "已关闭开机自启");
+  } catch (err) {
+    // 失败时回滚 UI
+    els.autostartToggle.checked = !want;
+    flashStatus(`设置失败：${err}`, true);
+  }
+});
