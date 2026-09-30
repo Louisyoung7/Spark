@@ -40,6 +40,22 @@
         "visible": false,
         "center": true,
         "focus": false
+      },
+      {
+        "label": "settings",
+        "title": "Spark 设置",
+        "url": "settings.html",
+        "width": 460,
+        "height": 480,
+        "minWidth": 380,
+        "minHeight": 360,
+        "resizable": true,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false,
+        "center": true,
+        "focus": false
       }
     ],
     "security": {

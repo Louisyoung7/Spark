@@ -101,6 +101,9 @@ function hideWindow() {
   appWindow.hide();
 }
 document.getElementById("close-btn").addEventListener("click", hideWindow);
+document.getElementById("settings-btn").addEventListener("click", () => {
+  invoke("open_settings");
+});
 window.addEventListener("keydown", (event) => {
   if (event.key === "Escape") hideWindow();
 });
