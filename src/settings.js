@@ -81,3 +81,26 @@ els.autostartToggle.addEventListener("change", async () => {
     flashStatus(`设置失败：${err}`, true);
   }
 });
+
+// ===== 笔记保存位置 =====
+els.pickPathBtn.addEventListener("click", async () => {
+  try {
+    const picked = await invoke("pick_notes_path");
+    if (!picked) return; // 用户取消
+    await invoke("set_notes_path", { path: picked });
+    await load();
+    flashStatus("已更新笔记保存位置");
+  } catch (err) {
+    flashStatus(`保存失败：${err}`, true);
+  }
+});
+
+els.resetPathBtn.addEventListener("click", async () => {
+  try {
+    await invoke("set_notes_path", { path: null });
+    await load();
+    flashStatus("已重置为默认位置");
+  } catch (err) {
+    flashStatus(`重置失败：${err}`, true);
+  }
+});

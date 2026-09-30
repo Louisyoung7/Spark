@@ -413,6 +413,41 @@ fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// 弹出原生保存对话框让用户选择笔记文件路径。
+/// 返回 None 表示用户取消。
+#[tauri::command]
+async fn pick_notes_path(app: AppHandle) -> Result<Option<String>, String> {
+    let cur = notes_path(&app).ok();
+    let start_dir = cur.as_ref().and_then(|p| p.parent()).map(|d| d.to_path_buf());
+    let default_name = cur
+        .as_ref()
+        .and_then(|p| p.file_name())
+        .and_then(|n| n.to_str())
+        .unwrap_or("notes.jsonl")
+        .to_string();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut dlg = rfd::FileDialog::new()
+            .set_title("选择笔记保存位置")
+            .set_file_name(&default_name)
+            .add_filter("JSON Lines", &["jsonl"]);
+        if let Some(dir) = start_dir {
+            dlg = dlg.set_directory(dir);
+        }
+        Ok::<_, String>(dlg.save_file().map(|p| p.to_string_lossy().to_string()))
+    })
+    .await
+    .map_err(|e| format!("文件对话框失败: {e}"))?
+}
+
+/// 设置/清除自定义笔记路径。`path = null` 表示恢复默认。
+/// 注意：旧路径上的历史文件不会被迁移，只是不再使用。
+#[tauri::command]
+fn set_notes_path(app: AppHandle, path: Option<String>) -> Result<(), String> {
+    let new_path = path.map(PathBuf::from);
+    set_settings(&app, |g| g.notes_path = new_path)?;
+    Ok(())
+}
+
 /// 极简系统托盘：「显示窗口」/「历史记录」/「设置」/「退出」；左键点击 toggle 速记窗口。
 #[cfg(desktop)]
 fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
@@ -553,6 +588,8 @@ pub fn run() {
             delete_note,
             get_settings,
             set_autostart,
+            pick_notes_path,
+            set_notes_path,
             open_settings
         ])
         .run(tauri::generate_context!())
