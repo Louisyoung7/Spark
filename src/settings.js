@@ -4,6 +4,17 @@ const { listen } = window.__TAURI__.event;
 
 const appWindow = getCurrentWindow();
 
+// 顶栏（按钮除外）可拖动窗口
+function enableWindowDragging(header) {
+  if (!header) return;
+  header.addEventListener("mousedown", (event) => {
+    if (event.target.closest("button, input, textarea, a, select")) return;
+    event.preventDefault();
+    appWindow.startDragging();
+  });
+}
+enableWindowDragging(document.querySelector("[data-drag-region]"));
+
 const els = {
   closeBtn: document.getElementById("close-btn"),
   autostartToggle: document.getElementById("autostart-toggle"),

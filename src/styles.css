@@ -32,6 +32,7 @@ body {
 /* ---------- 速记编辑器 ---------- */
 
 .editor-header {
+  position: relative; /* 供拖拽把手居中 */
   display: flex;
   align-items: center;
   gap: 8px;
@@ -163,6 +164,7 @@ body {
 }
 
 .history-header {
+  position: relative; /* 供拖拽把手居中 */
   display: flex;
   align-items: center;
   gap: 8px;
@@ -597,4 +599,29 @@ body.fullscreen .card {
 /* 全屏时不需要缩放热区 */
 body.fullscreen .resize-handle {
   display: none;
+}
+
+/* ---------- 顶栏拖动窗口 ---------- */
+
+/* 可拖动区域：光标提示为移动 */
+[data-drag-region] {
+  cursor: move;
+  user-select: none;
+}
+
+/* 顶部中央的把手提示（纯装饰，不拦截事件） */
+.drag-grabber {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 36px;
+  height: 4px;
+  border-radius: 2px;
+  background: #45475a;
+  pointer-events: none;
+}
+
+[data-drag-region]:hover .drag-grabber {
+  background: #89b4fa;
 }

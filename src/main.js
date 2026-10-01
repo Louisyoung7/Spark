@@ -3,6 +3,16 @@ const { getCurrentWindow } = window.__TAURI__.window;
 const { listen } = window.__TAURI__.event;
 
 const appWindow = getCurrentWindow();
+
+// 让顶栏可拖动窗口；按钮/输入控件上的按下不触发，避免影响点击
+function enableWindowDragging(header) {
+  if (!header) return;
+  header.addEventListener("mousedown", (event) => {
+    if (event.target.closest("button, input, textarea, a, select")) return;
+    event.preventDefault();
+    appWindow.startDragging();
+  });
+}
 const input = document.getElementById("note-input");
 const status = document.getElementById("status");
 const saveBtn = document.getElementById("save-btn");
@@ -69,6 +79,10 @@ function saveNote() {
 }
 
 saveBtn.addEventListener("click", saveNote);
+
+// ===== 拖动窗口 =====
+// 无边框窗口没有标题栏，顶栏（按钮除外）承担拖动职责
+enableWindowDragging(document.querySelector("[data-drag-region]"));
 
 // ===== 窗口缩放 =====
 // 无边框窗口没有系统缩放边框，用自定义 handle 触发 Tauri 原生 resize 拖拽。

@@ -3,6 +3,17 @@ const { getCurrentWindow } = window.__TAURI__.window;
 const { listen } = window.__TAURI__.event;
 
 const appWindow = getCurrentWindow();
+
+// 顶栏（按钮除外）可拖动窗口
+function enableWindowDragging(header) {
+  if (!header) return;
+  header.addEventListener("mousedown", (event) => {
+    if (event.target.closest("button, input, textarea, a, select")) return;
+    event.preventDefault();
+    appWindow.startDragging();
+  });
+}
+enableWindowDragging(document.querySelector("[data-drag-region]"));
 const listEl = document.getElementById("note-list");
 const countEl = document.getElementById("count");
 const emptyEl = document.getElementById("empty");
