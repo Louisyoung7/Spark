@@ -71,13 +71,36 @@ function saveNote() {
 saveBtn.addEventListener("click", saveNote);
 
 // ===== 窗口缩放 =====
-// 无边框窗口没有系统缩放边框，用自定义 handle 触发 Tauri 原生 resize 拖拽
+// 无边框窗口没有系统缩放边框，用自定义 handle 触发 Tauri 原生 resize 拖拽。
+//
+// 关键：拖拽期间窗口管理器会让窗口失焦，而主窗口有「点击外部自动收起」逻辑，
+// 若不抑制就会一按下左键窗口立刻消失。这里在按下时通知后端暂停自动收起，
+// 松手后再恢复；另加超时兜底，防止 mouseup 丢失导致标记残留。
+let resizing = false;
+let resizeEndTimer = null;
+
+function finishResize() {
+  if (!resizing) return;
+  resizing = false;
+  clearTimeout(resizeEndTimer);
+  resizeEndTimer = null;
+  invoke("end_resize").catch(() => {});
+}
+
 for (const handle of document.querySelectorAll("[data-resize]")) {
   handle.addEventListener("mousedown", (event) => {
     event.preventDefault();
+    event.stopPropagation();
+    resizing = true;
+    invoke("begin_resize").catch(() => {});
+    // 兜底：拖拽结束后若没收到 mouseup，3 秒后自行恢复
+    clearTimeout(resizeEndTimer);
+    resizeEndTimer = setTimeout(finishResize, 3000);
     appWindow.startResizeDragging(handle.dataset.resize);
   });
 }
+
+document.addEventListener("mouseup", finishResize);
 
 // ===== 全屏 =====
 let fullscreen = false;
