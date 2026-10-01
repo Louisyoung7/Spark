@@ -5,6 +5,9 @@
   "windows": ["main", "history", "settings"],
   "permissions": [
     "core:default",
-    "core:window:allow-hide"
+    "core:window:allow-hide",
+    "core:window:allow-start-resize-dragging",
+    "core:window:allow-set-fullscreen",
+    "core:window:allow-is-fullscreen"
   ]
 }

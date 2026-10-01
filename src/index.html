@@ -23,9 +23,14 @@
       ></textarea>
       <footer class="editor-footer">
         <span class="hint">Alt+Q 速记 · Alt+Z 历史 · Esc 收起</span>
+        <button id="fullscreen-btn" class="icon-btn" title="全屏 (F11)">⛶</button>
         <button id="save-btn" class="save-btn" title="Ctrl+Enter">保存</button>
       </footer>
       <div id="status" class="status" role="status"></div>
+      <!-- 无边框窗口没有系统缩放边框，用自定义 handle 触发原生 resize 拖拽 -->
+      <div class="resize-handle resize-e" data-resize="East"></div>
+      <div class="resize-handle resize-s" data-resize="South"></div>
+      <div class="resize-handle resize-se" data-resize="SouthEast"></div>
     </main>
   </body>
 </html>
