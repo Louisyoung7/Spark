@@ -32,7 +32,9 @@
 
 - **开机自启**：登录后自动运行（Linux 写 `~/.config/autostart/spark.desktop`）
 - **笔记保存位置**：自定义 `notes.jsonl` 路径；可随时重置为默认
-- **快捷键**：分别为两个窗口自定义快捷键；X11 下立即生效，Wayland 受 Portal 限制需重启
+- **快捷键**：点击输入框后**直接按下组合键**即可录制；X11 下立即生效，Wayland 受 Portal 限制需重启
+  - `Esc` 取消录制，`Backspace` 恢复默认值
+  - 录制期间会临时注销全局快捷键，避免按下组合键时弹出窗口打断
 - 所有偏好持久化在 `~/.local/share/spark/settings.json`（原子替换写回）
 
 ## 数据

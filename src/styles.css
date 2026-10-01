@@ -522,3 +522,14 @@ body {
   gap: 8px;
   padding: 6px 0 10px;
 }
+
+.hotkey-input {
+  cursor: pointer;
+  text-align: center;
+}
+
+.hotkey-input.recording {
+  border-color: #f9e2af;
+  color: #f9e2af;
+  background: #3b3550;
+}

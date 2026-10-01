@@ -35,6 +35,10 @@ const MIN_VISIBLE: Duration = Duration::from_millis(250);
 #[derive(Default)]
 struct LastShownAt(Mutex<Option<Instant>>);
 
+/// 是否处于快捷键录制模式（录制期间全局快捷键被临时注销）
+#[derive(Default)]
+struct Capturing(Mutex<bool>);
+
 /// 用户可配置项持久化在 `~/.local/share/spark/settings.json`。
 /// Option 字段：None = 使用内置默认。
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
@@ -556,6 +560,41 @@ fn non_empty(s: String) -> Option<String> {
     }
 }
 
+/// 进入快捷键录制模式：临时注销全部全局快捷键，
+/// 避免用户按下 Alt+Q 这类组合时把对应窗口弹出来打断录制。
+#[tauri::command]
+fn begin_hotkey_capture(app: AppHandle) -> Result<(), String> {
+    if is_wayland() {
+        // Portal 会话里的绑定无法临时注销，录制时可能触发，属已知限制
+        return Ok(());
+    }
+    use tauri_plugin_global_shortcut::GlobalShortcutExt;
+    app.global_shortcut()
+        .unregister_all()
+        .map_err(|e| format!("暂停快捷键失败: {e}"))?;
+    if let Some(s) = app.try_state::<Capturing>() {
+        if let Ok(mut g) = s.0.lock() {
+            *g = true;
+        }
+    }
+    Ok(())
+}
+
+/// 退出录制模式：按当前设置重新注册全局快捷键。
+#[tauri::command]
+fn end_hotkey_capture(app: AppHandle) -> Result<(), String> {
+    if is_wayland() {
+        return Ok(());
+    }
+    if let Some(s) = app.try_state::<Capturing>() {
+        if let Ok(mut g) = s.0.lock() {
+            *g = false;
+        }
+    }
+    rebind_hotkeys(&app)?;
+    Ok(())
+}
+
 /// 极简系统托盘：「显示窗口」/「历史记录」/「设置」/「退出」；左键点击 toggle 速记窗口。
 #[cfg(desktop)]
 fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
@@ -617,6 +656,7 @@ pub fn run() {
         ))
         .setup(|app| {
             app.manage(LastShownAt::default());
+            app.manage(Capturing::default());
             app.manage(SettingsState(Mutex::new(load_settings(app.handle()))));
 
             #[cfg(desktop)]
@@ -669,6 +709,25 @@ pub fn run() {
                 // 历史 / 设置窗口不自动收起。
                 // IME 候选窗是 override-redirect 窗口，不会触发顶层失焦，不影响中文输入。
                 WindowEvent::Focused(false) => {
+                    // 设置窗口：若在录制快捷键时切走，恢复绑定，
+                    // 否则全局快捷键会一直处于注销状态
+                    if window.label() == "settings" {
+                        let app = window.app_handle();
+                        let was_capturing = app
+                            .try_state::<Capturing>()
+                            .and_then(|s| {
+                                s.0.lock().ok().map(|mut g| {
+                                    let v = *g;
+                                    *g = false;
+                                    v
+                                })
+                            })
+                            .unwrap_or(false);
+                        if was_capturing && !is_wayland() {
+                            let _ = rebind_hotkeys(&app);
+                        }
+                        return;
+                    }
                     if window.label() != "main" {
                         return;
                     }
@@ -699,6 +758,8 @@ pub fn run() {
             pick_notes_path,
             set_notes_path,
             set_hotkeys,
+            begin_hotkey_capture,
+            end_hotkey_capture,
             open_settings
         ])
         .run(tauri::generate_context!())
