@@ -533,3 +533,8 @@ body {
   color: #f9e2af;
   background: #3b3550;
 }
+
+/* 把标题栏的关闭按钮推到最右 */
+.header-close {
+  margin-left: auto;
+}
