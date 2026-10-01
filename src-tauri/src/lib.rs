@@ -25,11 +25,11 @@ use tauri_plugin_autostart::MacosLauncher;
 use crate::config::{
     is_wayland, BLUR_HIDE_MARGIN, LABEL_MAIN, LABEL_SETTINGS, WIN_H, WIN_MIN_H, WIN_MIN_W, WIN_W,
 };
-use crate::hotkeys::{Capturing, abort_capture_if_any, register_on_startup};
+use crate::hotkeys::{abort_capture_if_any, register_on_startup, Capturing};
 use crate::settings::SettingsState;
 use crate::windows::{
-    LastShownAt, Resizing, clear_resizing, cursor_near_main_window, is_resizing,
-    main_window_should_auto_hide, show_main_window,
+    clear_resizing, cursor_near_main_window, is_resizing, main_window_should_auto_hide,
+    show_main_window, LastShownAt, Resizing,
 };
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

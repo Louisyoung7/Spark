@@ -4,8 +4,8 @@
 //! 可在设置中自定义）。换行由 serde_json 转义，每条记录始终占一个物理行。
 
 use std::fs;
-use std::io::Write;
 use std::fs::OpenOptions;
+use std::io::Write;
 
 use tauri::AppHandle;
 

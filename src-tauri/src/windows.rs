@@ -93,8 +93,16 @@ fn position_near_cursor(app: &AppHandle) -> Option<PhysicalPosition<i32>> {
     let y_max = y_min + ms.height as f64 - mh;
 
     // 窗口中心对齐光标，再夹进显示器可视区
-    let x = if x_max > x_min { (cursor.x - mw / 2.0).clamp(x_min, x_max) } else { x_min };
-    let y = if y_max > y_min { (cursor.y - mh / 2.0).clamp(y_min, y_max) } else { y_min };
+    let x = if x_max > x_min {
+        (cursor.x - mw / 2.0).clamp(x_min, x_max)
+    } else {
+        x_min
+    };
+    let y = if y_max > y_min {
+        (cursor.y - mh / 2.0).clamp(y_min, y_max)
+    } else {
+        y_min
+    };
     Some(PhysicalPosition::new(x as i32, y as i32))
 }
 
@@ -207,12 +215,10 @@ pub fn open_settings(app: AppHandle) {
 pub fn main_window_should_auto_hide(app: &AppHandle) -> bool {
     app.try_state::<LastShownAt>()
         .map(|s| {
-            s.0
-                .lock()
+            s.0.lock()
                 .ok()
                 .and_then(|g| g.map(|t| t.elapsed() >= MIN_VISIBLE))
                 .unwrap_or(true)
         })
         .unwrap_or(true)
 }
-

@@ -14,7 +14,7 @@ use crate::config::{effective_hotkey, HOTKEY_HISTORY, HOTKEY_MAIN};
 use crate::paths::{default_notes_path, settings_path};
 
 /// 用户可配置项。`Option` 字段：None = 使用内置默认。
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)]
 pub struct AppSettings {
     #[serde(default)]
     pub autostart: bool,
@@ -24,17 +24,6 @@ pub struct AppSettings {
     pub hotkey_main: Option<String>,
     #[serde(default)]
     pub hotkey_history: Option<String>,
-}
-
-impl Default for AppSettings {
-    fn default() -> Self {
-        Self {
-            autostart: false,
-            notes_path: None,
-            hotkey_main: None,
-            hotkey_history: None,
-        }
-    }
 }
 
 /// 全局共享的设置状态。启动时一次性从磁盘加载，写入时持久化。
@@ -122,7 +111,11 @@ pub fn get_settings(app: AppHandle) -> Result<SettingsView, String> {
     let cur_notes = notes_path(&app)?.to_string_lossy().to_string();
     let def_notes = default_notes_path(&app)?.to_string_lossy().to_string();
     let autostart_enabled = app.autolaunch().is_enabled().unwrap_or(false);
-    let supported = cfg!(any(target_os = "linux", target_os = "macos", target_os = "windows"));
+    let supported = cfg!(any(
+        target_os = "linux",
+        target_os = "macos",
+        target_os = "windows"
+    ));
 
     Ok(SettingsView {
         autostart: autostart_enabled,
@@ -156,7 +149,10 @@ pub fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> {
 #[tauri::command]
 pub async fn pick_notes_path(app: AppHandle) -> Result<Option<String>, String> {
     let cur = notes_path(&app).ok();
-    let start_dir = cur.as_ref().and_then(|p| p.parent()).map(|d| d.to_path_buf());
+    let start_dir = cur
+        .as_ref()
+        .and_then(|p| p.parent())
+        .map(|d| d.to_path_buf());
     let default_name = cur
         .as_ref()
         .and_then(|p| p.file_name())

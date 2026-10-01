@@ -14,7 +14,10 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
     let history_item = MenuItem::with_id(app, "history", "历史记录", true, None::<&str>)?;
     let settings_item = MenuItem::with_id(app, "settings", "设置", true, None::<&str>)?;
     let quit_item = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show_item, &history_item, &settings_item, &quit_item])?;
+    let menu = Menu::with_items(
+        app,
+        &[&show_item, &history_item, &settings_item, &quit_item],
+    )?;
 
     let icon = app
         .default_window_icon()
