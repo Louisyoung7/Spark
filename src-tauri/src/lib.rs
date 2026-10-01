@@ -1,642 +1,31 @@
-use std::fs::{self, OpenOptions};
-use std::io::Write;
-use std::path::PathBuf;
+//! Spark —— 极简 Linux 桌面速记工具。
+//!
+//! 本文件只负责组装：插件注册、窗口事件分发、命令路由。
+//! 具体业务逻辑分散在下列模块（依赖方向单向，无环）：
+//!
+//! ```text
+//! config ──> paths ──> settings ──> notes
+//!                          └──────> hotkeys ──> tray
+//!              config ──> windows ──────┘
+//! ```
+
+mod config;
+mod hotkeys;
+mod notes;
+mod paths;
+mod settings;
+mod tray;
+mod windows;
+
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
 
-use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, WindowEvent};
-use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
-use tauri_plugin_desktop_integration::DesktopIntegrationExt;
+use tauri::{Manager, WindowEvent};
+use tauri_plugin_autostart::MacosLauncher;
 
-/// 全局快捷键（默认；可被 settings.json 覆盖）
-const HOTKEY_MAIN: &str = "Alt+Q"; // 唤出速记窗口
-const HOTKEY_HISTORY: &str = "Ctrl+Alt+Q"; // 唤出历史记录窗口
-/// Wayland Portal 会话 ID（稳定标识；X11 下忽略）
-const SESSION_ID: &str = "spark-toggle";
-const SESSION_ID_HISTORY: &str = "spark-history-toggle";
-/// 合成器快捷键授权对话框中展示的描述
-const SESSION_DESCRIPTION: &str = "Spark 速记";
-const SESSION_DESCRIPTION_HISTORY: &str = "Spark 历史记录";
-/// 数据目录：~/.local/share/spark/
-const APP_DIR: &str = "spark";
-const NOTES_FILE: &str = "notes.jsonl";
-const SETTINGS_FILE: &str = "settings.json";
-/// 主窗口逻辑尺寸（须与 tauri.conf.json 保持一致）
-const WIN_W: f64 = 400.0;
-const WIN_H: f64 = 450.0;
-/// 主窗口最小尺寸（须与 tauri.conf.json 保持一致）
-const WIN_MIN_W: f64 = 320.0;
-const WIN_MIN_H: f64 = 260.0;
-/// 显示后的最小可见时长：忽略此窗口期内的失焦事件，
-/// 避免 show/focus 事件乱序导致窗口刚弹出就被收起
-const MIN_VISIBLE: Duration = Duration::from_millis(250);
-
-/// 主窗口最近一次显示时刻（点击窗口外收起的防抖护栏）
-#[derive(Default)]
-struct LastShownAt(Mutex<Option<Instant>>);
-
-/// 是否处于快捷键录制模式（录制期间全局快捷键被临时注销）
-#[derive(Default)]
-struct Capturing(Mutex<bool>);
-
-/// 用户可配置项持久化在 `~/.local/share/spark/settings.json`。
-/// Option 字段：None = 使用内置默认。
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
-struct AppSettings {
-    #[serde(default)]
-    autostart: bool,
-    #[serde(default)]
-    notes_path: Option<PathBuf>,
-    #[serde(default)]
-    hotkey_main: Option<String>,
-    #[serde(default)]
-    hotkey_history: Option<String>,
-}
-
-impl Default for AppSettings {
-    fn default() -> Self {
-        Self {
-            autostart: false,
-            notes_path: None,
-            hotkey_main: None,
-            hotkey_history: None,
-        }
-    }
-}
-
-/// 全局共享的设置状态。启动时一次性从磁盘加载，写入时持久化。
-#[derive(Default)]
-struct SettingsState(Mutex<AppSettings>);
-
-fn settings_path(app: &AppHandle) -> Result<PathBuf, String> {
-    let home = app.path().home_dir().map_err(|e| e.to_string())?;
-    Ok(home
-        .join(".local")
-        .join("share")
-        .join(APP_DIR)
-        .join(SETTINGS_FILE))
-}
-
-fn load_settings(app: &AppHandle) -> AppSettings {
-    let Ok(path) = settings_path(app) else {
-        return AppSettings::default();
-    };
-    if !path.exists() {
-        return AppSettings::default();
-    }
-    fs::read_to_string(&path)
-        .ok()
-        .and_then(|t| serde_json::from_str::<AppSettings>(&t).ok())
-        .unwrap_or_default()
-}
-
-fn save_settings(app: &AppHandle, s: &AppSettings) -> Result<(), String> {
-    let path = settings_path(app)?;
-    if let Some(dir) = path.parent() {
-        fs::create_dir_all(dir).map_err(|e| format!("创建目录失败: {e}"))?;
-    }
-    let json = serde_json::to_string_pretty(s).map_err(|e| format!("序列化失败: {e}"))?;
-    // 临时文件 + 原子替换，避免写一半崩溃损坏配置
-    let tmp = path.with_extension("json.tmp");
-    fs::write(&tmp, json).map_err(|e| format!("写入失败: {e}"))?;
-    fs::rename(&tmp, &path).map_err(|e| format!("替换失败: {e}"))?;
-    Ok(())
-}
-
-fn settings_snapshot(app: &AppHandle) -> AppSettings {
-    app.try_state::<SettingsState>()
-        .and_then(|s| s.0.lock().ok().map(|g| g.clone()))
-        .unwrap_or_default()
-}
-
-fn set_settings<F>(app: &AppHandle, mutate: F) -> Result<AppSettings, String>
-where
-    F: FnOnce(&mut AppSettings),
-{
-    let state = app.state::<SettingsState>();
-    let mut g = state.0.lock().map_err(|e| format!("锁定设置失败: {e}"))?;
-    mutate(&mut g);
-    save_settings(app, &g)?;
-    Ok(g.clone())
-}
-
-/// 笔记文件路径：自定义优先；缺省时返回默认路径
-fn notes_path(app: &AppHandle) -> Result<PathBuf, String> {
-    if let Some(custom) = settings_snapshot(app).notes_path {
-        return Ok(custom);
-    }
-    let home = app.path().home_dir().map_err(|e| e.to_string())?;
-    Ok(home.join(".local").join("share").join(APP_DIR).join(NOTES_FILE))
-}
-
-fn default_notes_path(app: &AppHandle) -> Result<PathBuf, String> {
-    let home = app.path().home_dir().map_err(|e| e.to_string())?;
-    Ok(home.join(".local").join("share").join(APP_DIR).join(NOTES_FILE))
-}
-
-fn effective_hotkey(custom: Option<String>, default: &str) -> String {
-    custom.unwrap_or_else(|| default.to_string())
-}
-
-/// 是否运行在 Wayland（Portal 会话无法热更快捷键）
-fn is_wayland() -> bool {
-    std::env::var_os("WAYLAND_DISPLAY").is_some()
-}
-
-/// 按当前设置重新注册两个全局快捷键。
-/// - Ok(true)：X11，已立即生效
-/// - Ok(false)：Wayland，无法热更，需重启应用
-/// - Err：快捷键字符串无法解析 / 已被占用等真实失败
-fn rebind_hotkeys(app: &AppHandle) -> Result<bool, String> {
-    if is_wayland() {
-        return Ok(false);
-    }
-    use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
-
-    let gs = app.global_shortcut();
-    // 清掉启动时经 desktop-integration 注册的旧绑定，再按新设置重新注册
-    gs.unregister_all()
-        .map_err(|e| format!("清理旧快捷键失败: {e}"))?;
-
-    let s = settings_snapshot(app);
-    let hk_main = effective_hotkey(s.hotkey_main.clone(), HOTKEY_MAIN);
-    let hk_history = effective_hotkey(s.hotkey_history.clone(), HOTKEY_HISTORY);
-
-    let handle_main = app.clone();
-    gs.on_shortcut(hk_main.as_str(), move |_app, _shortcut, event| {
-        if event.state == ShortcutState::Pressed {
-            toggle_main_window(&handle_main);
-        }
-    })
-    .map_err(|e| format!("快捷键「{hk_main}」无效或已被占用: {e}"))?;
-
-    let handle_history = app.clone();
-    gs.on_shortcut(hk_history.as_str(), move |_app, _shortcut, event| {
-        if event.state == ShortcutState::Pressed {
-            toggle_history_window(&handle_history);
-        }
-    })
-    .map_err(|e| format!("快捷键「{hk_history}」无效或已被占用: {e}"))?;
-
-    Ok(true)
-}
-
-/// 追加一条速记到当前笔记文件（JSON Lines）。
-#[tauri::command]
-fn save_note(app: AppHandle, content: String) -> Result<(), String> {
-    // 去掉首尾空白；内部换行保留（serde_json 会转义为 \n，JSONL 每条仍是单行）
-    let content = content.trim();
-    if content.is_empty() {
-        return Err("内容为空".into());
-    }
-
-    let path = notes_path(&app)?;
-    if let Some(dir) = path.parent() {
-        fs::create_dir_all(dir).map_err(|e| format!("创建目录失败: {e}"))?;
-    }
-
-    let time = chrono::Local::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, false);
-    let line = serde_json::json!({ "time": time, "content": content }).to_string();
-
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .map_err(|e| format!("打开文件失败: {e}"))?;
-    writeln!(file, "{line}").map_err(|e| format!("写入失败: {e}"))?;
-    Ok(())
-}
-
-/// 一条历史记录（`line` 为文件中的 1 起始行号，作为删除用的稳定 id）
-#[derive(serde::Serialize)]
-struct NoteEntry {
-    line: usize,
-    time: String,
-    content: String,
-}
-
-/// 读取全部笔记，按最新在前返回。
-#[tauri::command]
-fn list_notes(app: AppHandle) -> Result<Vec<NoteEntry>, String> {
-    let path = notes_path(&app)?;
-    if !path.exists() {
-        return Ok(Vec::new());
-    }
-    let text = fs::read_to_string(&path).map_err(|e| format!("读取文件失败: {e}"))?;
-    let mut notes = Vec::new();
-    for (idx, line) in text.lines().enumerate() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        // 单行损坏时跳过该行，不影响其余记录展示
-        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
-            continue;
-        };
-        notes.push(NoteEntry {
-            line: idx + 1,
-            time: v
-                .get("time")
-                .and_then(|t| t.as_str())
-                .unwrap_or_default()
-                .to_string(),
-            content: v
-                .get("content")
-                .and_then(|c| c.as_str())
-                .unwrap_or_default()
-                .to_string(),
-        });
-    }
-    notes.reverse(); // 最新在前
-    Ok(notes)
-}
-
-/// 删除指定行（1 起始）的笔记，其余行写回。
-#[tauri::command]
-fn delete_note(app: AppHandle, line: usize) -> Result<(), String> {
-    let path = notes_path(&app)?;
-    if !path.exists() {
-        return Ok(());
-    }
-    let text = fs::read_to_string(&path).map_err(|e| format!("读取文件失败: {e}"))?;
-    let mut lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
-    if line == 0 || line > lines.len() {
-        return Err("记录不存在".into());
-    }
-    lines.remove(line - 1);
-    // 先写临时文件再原子替换，避免写一半崩溃损坏数据
-    let tmp = path.with_extension("jsonl.tmp");
-    let body = if lines.is_empty() {
-        String::new()
-    } else {
-        format!("{}\n", lines.join("\n"))
-    };
-    fs::write(&tmp, body).map_err(|e| format!("写入临时文件失败: {e}"))?;
-    fs::rename(&tmp, &path).map_err(|e| format!("替换文件失败: {e}"))?;
-    Ok(())
-}
-
-/// 计算"鼠标附近"的窗口物理坐标，并 clamp 到光标所在显示器内。
-/// 拿不到光标位置或匹配不到显示器时返回 None（调用方回退居中）。
-/// 注意：Wayland 下 set_position 会被合成器忽略，属预期平台差异。
-fn position_near_cursor(app: &AppHandle) -> Option<PhysicalPosition<i32>> {
-    let cursor = app.cursor_position().ok()?;
-    let monitors = app.available_monitors().ok()?;
-    let monitor = monitors.into_iter().find(|m| {
-        let p = m.position();
-        let s = m.size();
-        let (x, y) = (p.x as f64, p.y as f64);
-        let (w, h) = (s.width as f64, s.height as f64);
-        cursor.x >= x && cursor.x < x + w && cursor.y >= y && cursor.y < y + h
-    })?;
-
-    let scale = monitor.scale_factor();
-    let (mw, mh) = (WIN_W * scale, WIN_H * scale);
-    let mp = monitor.position();
-    let ms = monitor.size();
-    let (x_min, y_min) = (mp.x as f64, mp.y as f64);
-    let x_max = x_min + ms.width as f64 - mw;
-    let y_max = y_min + ms.height as f64 - mh;
-
-    // 窗口中心对齐光标，再夹进显示器可视区
-    let x = if x_max > x_min { (cursor.x - mw / 2.0).clamp(x_min, x_max) } else { x_min };
-    let y = if y_max > y_min { (cursor.y - mh / 2.0).clamp(y_min, y_max) } else { y_min };
-    Some(PhysicalPosition::new(x as i32, y as i32))
-}
-
-/// 显示主窗口：定位（鼠标附近，失败回退居中）→ show → 原生激活聚焦。
-fn show_main_window(app: &AppHandle) {
-    let Some(win) = app.get_webview_window("main") else {
-        return;
-    };
-    // 记录显示时刻，供"点击窗口外收起"防抖
-    if let Some(state) = app.try_state::<LastShownAt>() {
-        if let Ok(mut g) = state.0.lock() {
-            *g = Some(Instant::now());
-        }
-    }
-    if win.is_minimized().unwrap_or(false) {
-        let _ = win.unminimize();
-    }
-    match position_near_cursor(app) {
-        Some(pos) => {
-            let _ = win.set_position(pos);
-        }
-        None => {
-            let _ = win.center();
-        }
-    }
-    let _ = win.show();
-    // X11: 盖 _NET_WM_USER_TIME 时间戳并 gtk present_with_time，
-    // 让窗口管理器把弹窗当作用户驱动的激活（拿到焦点）；Wayland: 无操作
-    app.request_desktop_activation_assist(&win, "spark-show", "main");
-    // Wayland: 首次窗口可见后触发 Portal BindShortcuts（X11 下 no-op，幂等）
-    app.set_shortcut_window(&win);
-    // 通知前端聚焦输入框（DOM 焦点兜底）
-    let _ = app.emit("focus-input", ());
-}
-
-/// 快捷键 / 托盘触发的 toggle：已显示 → 重新聚焦；隐藏 → 显示。
-fn toggle_main_window(app: &AppHandle) {
-    let Some(win) = app.get_webview_window("main") else {
-        return;
-    };
-    if win.is_visible().unwrap_or(false) {
-        app.request_desktop_activation_assist(&win, "spark-refocus", "main");
-        let _ = win.set_focus();
-        let _ = app.emit("focus-input", ());
-    } else {
-        show_main_window(app);
-    }
-}
-
-/// 显示历史记录窗口并通知前端刷新列表。
-fn show_history_window(app: &AppHandle) {
-    let Some(win) = app.get_webview_window("history") else {
-        return;
-    };
-    if win.is_minimized().unwrap_or(false) {
-        let _ = win.unminimize();
-    }
-    let _ = win.show();
-    app.request_desktop_activation_assist(&win, "spark-history-show", "history");
-    let _ = win.set_focus();
-    let _ = app.emit("reload-history", ());
-}
-
-/// Alt+Z toggle：已显示 → 隐藏；隐藏 → 显示。
-fn toggle_history_window(app: &AppHandle) {
-    let Some(win) = app.get_webview_window("history") else {
-        return;
-    };
-    if win.is_visible().unwrap_or(false) {
-        let _ = win.hide();
-    } else {
-        show_history_window(app);
-    }
-}
-
-/// 显示设置窗口并通知前端刷新。
-fn show_settings_window(app: &AppHandle) {
-    let Some(win) = app.get_webview_window("settings") else {
-        return;
-    };
-    if win.is_minimized().unwrap_or(false) {
-        let _ = win.unminimize();
-    }
-    let _ = win.show();
-    app.request_desktop_activation_assist(&win, "spark-settings-show", "settings");
-    let _ = win.set_focus();
-    let _ = app.emit("reload-settings", ());
-}
-
-/// 设置窗口 toggle：已显示 → 隐藏；隐藏 → 显示。
-fn toggle_settings_window(app: &AppHandle) {
-    let Some(win) = app.get_webview_window("settings") else {
-        return;
-    };
-    if win.is_visible().unwrap_or(false) {
-        let _ = win.hide();
-    } else {
-        show_settings_window(app);
-    }
-}
-
-/// 前端可调用的统一入口（托盘和历史小图标都走这里）
-#[tauri::command]
-fn open_settings(app: AppHandle) {
-    show_settings_window(&app);
-}
-
-/// 当前生效设置 + 默认值快照（供设置界面展示）
-#[derive(serde::Serialize)]
-struct SettingsView {
-    autostart: bool,
-    autostart_supported: bool,
-    notes_path: String,
-    notes_path_default: String,
-    notes_path_is_default: bool,
-    hotkey_main: String,
-    hotkey_main_default: String,
-    hotkey_main_custom: Option<String>,
-    hotkey_history: String,
-    hotkey_history_default: String,
-    hotkey_history_custom: Option<String>,
-}
-
-#[tauri::command]
-fn get_settings(app: AppHandle) -> Result<SettingsView, String> {
-    let s = settings_snapshot(&app);
-    let cur_notes = notes_path(&app)?.to_string_lossy().to_string();
-    let def_notes = default_notes_path(&app)?.to_string_lossy().to_string();
-    let autostart_enabled = app.autolaunch().is_enabled().unwrap_or(false);
-    let supported = cfg!(any(target_os = "linux", target_os = "macos", target_os = "windows"));
-
-    Ok(SettingsView {
-        autostart: autostart_enabled,
-        autostart_supported: supported,
-        notes_path: cur_notes,
-        notes_path_default: def_notes,
-        notes_path_is_default: s.notes_path.is_none(),
-        hotkey_main: effective_hotkey(s.hotkey_main.clone(), HOTKEY_MAIN),
-        hotkey_main_default: HOTKEY_MAIN.to_string(),
-        hotkey_main_custom: s.hotkey_main.clone(),
-        hotkey_history: effective_hotkey(s.hotkey_history.clone(), HOTKEY_HISTORY),
-        hotkey_history_default: HOTKEY_HISTORY.to_string(),
-        hotkey_history_custom: s.hotkey_history.clone(),
-    })
-}
-
-/// 切换登录自启；同时把目标态持久化到 settings.json（保持与插件状态一致）
-#[tauri::command]
-fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> {
-    let autolaunch = app.autolaunch();
-    if enabled {
-        autolaunch.enable().map_err(|e| format!("启用失败: {e}"))?;
-    } else {
-        autolaunch.disable().map_err(|e| format!("禁用失败: {e}"))?;
-    }
-    set_settings(&app, |g| g.autostart = enabled)?;
-    Ok(())
-}
-
-/// 弹出原生保存对话框让用户选择笔记文件路径。
-/// 返回 None 表示用户取消。
-#[tauri::command]
-async fn pick_notes_path(app: AppHandle) -> Result<Option<String>, String> {
-    let cur = notes_path(&app).ok();
-    let start_dir = cur.as_ref().and_then(|p| p.parent()).map(|d| d.to_path_buf());
-    let default_name = cur
-        .as_ref()
-        .and_then(|p| p.file_name())
-        .and_then(|n| n.to_str())
-        .unwrap_or("notes.jsonl")
-        .to_string();
-    tauri::async_runtime::spawn_blocking(move || {
-        let mut dlg = rfd::FileDialog::new()
-            .set_title("选择笔记保存位置")
-            .set_file_name(&default_name)
-            .add_filter("JSON Lines", &["jsonl"]);
-        if let Some(dir) = start_dir {
-            dlg = dlg.set_directory(dir);
-        }
-        Ok::<_, String>(dlg.save_file().map(|p| p.to_string_lossy().to_string()))
-    })
-    .await
-    .map_err(|e| format!("文件对话框失败: {e}"))?
-}
-
-/// 设置/清除自定义笔记路径。`path = null` 表示恢复默认。
-/// 注意：旧路径上的历史文件不会被迁移，只是不再使用。
-#[tauri::command]
-fn set_notes_path(app: AppHandle, path: Option<String>) -> Result<(), String> {
-    let new_path = path.map(PathBuf::from);
-    set_settings(&app, |g| g.notes_path = new_path)?;
-    Ok(())
-}
-
-/// 保存自定义快捷键的结果
-#[derive(serde::Serialize)]
-struct HotkeyResult {
-    /// 是否已立即生效（Wayland 下为 false，需重启）
-    applied: bool,
-    /// 供前端展示的提示语
-    message: String,
-}
-
-/// 保存自定义快捷键（null / 空串表示恢复默认）。
-/// 持久化后会立即重新注册全局快捷键，X11 下无需重启；
-/// Wayland 的 Portal 会话不支持热更，此时返回 applied=false 提示重启。
-#[tauri::command]
-fn set_hotkeys(
-    app: AppHandle,
-    hotkey_main: Option<String>,
-    hotkey_history: Option<String>,
-) -> Result<HotkeyResult, String> {
-    let hk_main = hotkey_main.and_then(non_empty);
-    let hk_history = hotkey_history.and_then(non_empty);
-
-    // 两个窗口的快捷键不能相同，否则后者会注册失败
-    if let (Some(a), Some(b)) = (&hk_main, &hk_history) {
-        if a.eq_ignore_ascii_case(b) {
-            return Err("两个快捷键不能相同".into());
-        }
-    }
-
-    // 保存旧值，注册失败时回滚，避免留下永远注册不上的死配置
-    let prev = settings_snapshot(&app);
-    set_settings(&app, |g| {
-        g.hotkey_main = hk_main;
-        g.hotkey_history = hk_history;
-    })?;
-
-    match rebind_hotkeys(&app) {
-        Ok(true) => Ok(HotkeyResult {
-            applied: true,
-            message: "已生效".into(),
-        }),
-        Ok(false) => Ok(HotkeyResult {
-            applied: false,
-            message: "已保存，重启应用后生效（Wayland 限制）".into(),
-        }),
-        Err(e) => {
-            // 回滚并恢复旧绑定，保证应用始终有可用快捷键
-            let _ = set_settings(&app, |g| {
-                g.hotkey_main = prev.hotkey_main.clone();
-                g.hotkey_history = prev.hotkey_history.clone();
-            });
-            let _ = rebind_hotkeys(&app);
-            Err(e)
-        }
-    }
-}
-
-fn non_empty(s: String) -> Option<String> {
-    let t = s.trim();
-    if t.is_empty() {
-        None
-    } else {
-        Some(t.to_string())
-    }
-}
-
-/// 进入快捷键录制模式：临时注销全部全局快捷键，
-/// 避免用户按下 Alt+Q 这类组合时把对应窗口弹出来打断录制。
-#[tauri::command]
-fn begin_hotkey_capture(app: AppHandle) -> Result<(), String> {
-    if is_wayland() {
-        // Portal 会话里的绑定无法临时注销，录制时可能触发，属已知限制
-        return Ok(());
-    }
-    use tauri_plugin_global_shortcut::GlobalShortcutExt;
-    app.global_shortcut()
-        .unregister_all()
-        .map_err(|e| format!("暂停快捷键失败: {e}"))?;
-    if let Some(s) = app.try_state::<Capturing>() {
-        if let Ok(mut g) = s.0.lock() {
-            *g = true;
-        }
-    }
-    Ok(())
-}
-
-/// 退出录制模式：按当前设置重新注册全局快捷键。
-#[tauri::command]
-fn end_hotkey_capture(app: AppHandle) -> Result<(), String> {
-    if is_wayland() {
-        return Ok(());
-    }
-    if let Some(s) = app.try_state::<Capturing>() {
-        if let Ok(mut g) = s.0.lock() {
-            *g = false;
-        }
-    }
-    rebind_hotkeys(&app)?;
-    Ok(())
-}
-
-/// 极简系统托盘：「显示窗口」/「历史记录」/「设置」/「退出」；左键点击 toggle 速记窗口。
-#[cfg(desktop)]
-fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
-    use tauri::menu::{Menu, MenuItem};
-    use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-
-    let show_item = MenuItem::with_id(app, "show", "显示窗口", true, None::<&str>)?;
-    let history_item = MenuItem::with_id(app, "history", "历史记录", true, None::<&str>)?;
-    let settings_item = MenuItem::with_id(app, "settings", "设置", true, None::<&str>)?;
-    let quit_item = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show_item, &history_item, &settings_item, &quit_item])?;
-
-    let icon = app
-        .default_window_icon()
-        .expect("未找到默认窗口图标")
-        .clone();
-
-    TrayIconBuilder::with_id("spark-tray")
-        .icon(icon)
-        .tooltip("Spark 速记")
-        .menu(&menu)
-        .show_menu_on_left_click(false)
-        .on_menu_event(|app, event| match event.id.as_ref() {
-            "show" => toggle_main_window(app),
-            "history" => toggle_history_window(app),
-            "settings" => toggle_settings_window(app),
-            "quit" => app.exit(0),
-            _ => {}
-        })
-        .on_tray_icon_event(|tray, event| {
-            if let TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Up,
-                ..
-            } = event
-            {
-                toggle_main_window(tray.app_handle());
-            }
-        })
-        .build(app)?;
-    Ok(())
-}
+use crate::config::{is_wayland, LABEL_MAIN, LABEL_SETTINGS, WIN_H, WIN_MIN_H, WIN_MIN_W, WIN_W};
+use crate::hotkeys::{Capturing, abort_capture_if_any, register_on_startup};
+use crate::settings::SettingsState;
+use crate::windows::{LastShownAt, main_window_should_auto_hide, show_main_window};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -657,111 +46,76 @@ pub fn run() {
         .setup(|app| {
             app.manage(LastShownAt::default());
             app.manage(Capturing::default());
-            app.manage(SettingsState(Mutex::new(load_settings(app.handle()))));
+            app.manage(SettingsState(Mutex::new(settings::load_settings(
+                app.handle(),
+            ))));
 
             #[cfg(desktop)]
-            setup_tray(app.handle())?;
+            tray::setup(app.handle())?;
 
-            // WebKitGTK 的内容最小尺寸会撑大窗口：
-            // 1) 重置 webview widget 的 size request，消除内容最小尺寸下限
-            // 2) 显式收紧窗口最小约束并回到配置尺寸
-            if let Some(win) = app.get_webview_window("main") {
-                let _ = win.with_webview(|webview| {
-                    use gtk::prelude::WidgetExt;
-                    webview.inner().set_size_request(1, 1);
-                });
-                let _ = win.set_maximizable(false);
-                let _ = win.set_min_size(Some(tauri::LogicalSize::new(WIN_MIN_W, WIN_MIN_H)));
-                let _ = win.set_size(tauri::LogicalSize::new(WIN_W, WIN_H));
-            }
+            init_main_window(app);
 
-            let snapshot = settings_snapshot(app.handle());
-            let handle = app.handle().clone();
-            let cb_handle = handle.clone();
-            let hk_main = effective_hotkey(snapshot.hotkey_main.clone(), HOTKEY_MAIN);
-            handle.register_shortcut(SESSION_ID, SESSION_DESCRIPTION, &hk_main, move || {
-                toggle_main_window(&cb_handle);
-            });
-            let cb_handle_history = handle.clone();
-            let hk_history =
-                effective_hotkey(snapshot.hotkey_history.clone(), HOTKEY_HISTORY);
-            // 注：X11 下两个快捷键均可直接注册；Wayland Portal 路径下
-            // desktop-integration 插件当前仅支持单快捷键会话，第二个注册
-            // 会覆盖第一个的绑定状态，Wayland 环境以历史窗口快捷键为准。
-            handle.register_shortcut(
-                SESSION_ID_HISTORY,
-                SESSION_DESCRIPTION_HISTORY,
-                &hk_history,
-                move || {
-                    toggle_history_window(&cb_handle_history);
-                },
-            );
+            register_on_startup(app.handle());
             Ok(())
         })
-        .on_window_event(|window, event| {
-            match event {
-                WindowEvent::CloseRequested { api, .. } => {
-                    // 关闭 = 隐藏，应用常驻后台，仅托盘「退出」可结束进程
-                    api.prevent_close();
-                    let _ = window.hide();
+        .on_window_event(|window, event| match event {
+            WindowEvent::CloseRequested { api, .. } => {
+                // 关闭 = 隐藏，应用常驻后台，仅托盘「退出」可结束进程
+                api.prevent_close();
+                let _ = window.hide();
+            }
+            WindowEvent::Focused(false) => {
+                // 设置窗口：若在录制快捷键时切走，恢复绑定，
+                // 否则全局快捷键会一直处于注销状态
+                if window.label() == LABEL_SETTINGS {
+                    if !is_wayland() {
+                        abort_capture_if_any(window.app_handle());
+                    }
+                    return;
                 }
                 // 点击窗口外（失焦）→ 收起【速记窗口】，保留草稿（等同 Esc）。
-                // 历史 / 设置窗口不自动收起。
+                // 历史窗口不自动收起，避免查阅/复制时切到其他应用就被关闭。
                 // IME 候选窗是 override-redirect 窗口，不会触发顶层失焦，不影响中文输入。
-                WindowEvent::Focused(false) => {
-                    // 设置窗口：若在录制快捷键时切走，恢复绑定，
-                    // 否则全局快捷键会一直处于注销状态
-                    if window.label() == "settings" {
-                        let app = window.app_handle();
-                        let was_capturing = app
-                            .try_state::<Capturing>()
-                            .and_then(|s| {
-                                s.0.lock().ok().map(|mut g| {
-                                    let v = *g;
-                                    *g = false;
-                                    v
-                                })
-                            })
-                            .unwrap_or(false);
-                        if was_capturing && !is_wayland() {
-                            let _ = rebind_hotkeys(&app);
-                        }
-                        return;
-                    }
-                    if window.label() != "main" {
-                        return;
-                    }
-                    let guard_passed = window
-                        .app_handle()
-                        .try_state::<LastShownAt>()
-                        .map(|s| {
-                            s.0
-                                .lock()
-                                .ok()
-                                .and_then(|g| g.map(|t| t.elapsed() >= MIN_VISIBLE))
-                                .unwrap_or(true)
-                        })
-                        .unwrap_or(true);
-                    if guard_passed && window.is_visible().unwrap_or(false) {
-                        let _ = window.hide();
-                    }
+                if window.label() != LABEL_MAIN {
+                    return;
                 }
-                _ => {}
+                if main_window_should_auto_hide(window.app_handle())
+                    && window.is_visible().unwrap_or(false)
+                {
+                    let _ = window.hide();
+                }
             }
+            _ => {}
         })
         .invoke_handler(tauri::generate_handler![
-            save_note,
-            list_notes,
-            delete_note,
-            get_settings,
-            set_autostart,
-            pick_notes_path,
-            set_notes_path,
-            set_hotkeys,
-            begin_hotkey_capture,
-            end_hotkey_capture,
-            open_settings
+            notes::save_note,
+            notes::list_notes,
+            notes::delete_note,
+            settings::get_settings,
+            settings::set_autostart,
+            settings::pick_notes_path,
+            settings::set_notes_path,
+            hotkeys::set_hotkeys,
+            hotkeys::begin_hotkey_capture,
+            hotkeys::end_hotkey_capture,
+            windows::open_settings
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// WebKitGTK 的内容最小尺寸会撑大窗口：
+/// 1) 重置 webview widget 的 size request，消除内容最小尺寸下限
+/// 2) 显式收紧窗口最小约束、禁用最大化并回到配置尺寸
+fn init_main_window(app: &mut tauri::App) {
+    let Some(win) = app.get_webview_window(LABEL_MAIN) else {
+        return;
+    };
+    let _ = win.with_webview(|webview| {
+        use gtk::prelude::WidgetExt;
+        webview.inner().set_size_request(1, 1);
+    });
+    let _ = win.set_maximizable(false);
+    let _ = win.set_min_size(Some(tauri::LogicalSize::new(WIN_MIN_W, WIN_MIN_H)));
+    let _ = win.set_size(tauri::LogicalSize::new(WIN_W, WIN_H));
 }
