@@ -10,7 +10,7 @@ use tauri_plugin_desktop_integration::DesktopIntegrationExt;
 
 /// 全局快捷键（默认；可被 settings.json 覆盖）
 const HOTKEY_MAIN: &str = "Alt+Q"; // 唤出速记窗口
-const HOTKEY_HISTORY: &str = "Alt+Z"; // 唤出历史记录窗口
+const HOTKEY_HISTORY: &str = "Ctrl+Alt+Q"; // 唤出历史记录窗口
 /// Wayland Portal 会话 ID（稳定标识；X11 下忽略）
 const SESSION_ID: &str = "spark-toggle";
 const SESSION_ID_HISTORY: &str = "spark-history-toggle";
@@ -132,6 +132,49 @@ fn default_notes_path(app: &AppHandle) -> Result<PathBuf, String> {
 
 fn effective_hotkey(custom: Option<String>, default: &str) -> String {
     custom.unwrap_or_else(|| default.to_string())
+}
+
+/// 是否运行在 Wayland（Portal 会话无法热更快捷键）
+fn is_wayland() -> bool {
+    std::env::var_os("WAYLAND_DISPLAY").is_some()
+}
+
+/// 按当前设置重新注册两个全局快捷键。
+/// - Ok(true)：X11，已立即生效
+/// - Ok(false)：Wayland，无法热更，需重启应用
+/// - Err：快捷键字符串无法解析 / 已被占用等真实失败
+fn rebind_hotkeys(app: &AppHandle) -> Result<bool, String> {
+    if is_wayland() {
+        return Ok(false);
+    }
+    use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+
+    let gs = app.global_shortcut();
+    // 清掉启动时经 desktop-integration 注册的旧绑定，再按新设置重新注册
+    gs.unregister_all()
+        .map_err(|e| format!("清理旧快捷键失败: {e}"))?;
+
+    let s = settings_snapshot(app);
+    let hk_main = effective_hotkey(s.hotkey_main.clone(), HOTKEY_MAIN);
+    let hk_history = effective_hotkey(s.hotkey_history.clone(), HOTKEY_HISTORY);
+
+    let handle_main = app.clone();
+    gs.on_shortcut(hk_main.as_str(), move |_app, _shortcut, event| {
+        if event.state == ShortcutState::Pressed {
+            toggle_main_window(&handle_main);
+        }
+    })
+    .map_err(|e| format!("快捷键「{hk_main}」无效或已被占用: {e}"))?;
+
+    let handle_history = app.clone();
+    gs.on_shortcut(hk_history.as_str(), move |_app, _shortcut, event| {
+        if event.state == ShortcutState::Pressed {
+            toggle_history_window(&handle_history);
+        }
+    })
+    .map_err(|e| format!("快捷键「{hk_history}」无效或已被占用: {e}"))?;
+
+    Ok(true)
 }
 
 /// 追加一条速记到当前笔记文件（JSON Lines）。
@@ -448,23 +491,60 @@ fn set_notes_path(app: AppHandle, path: Option<String>) -> Result<(), String> {
     Ok(())
 }
 
-/// 保存自定义快捷键。`null` 表示恢复默认；新值需重启应用生效
-/// （X11 全局快捷键插件支持热更，但 desktop-integration 插件统一管理，
-/// 改动 Wayland Portal 会话需要重启；为一致性两侧均重启生效）
+/// 保存自定义快捷键的结果
+#[derive(serde::Serialize)]
+struct HotkeyResult {
+    /// 是否已立即生效（Wayland 下为 false，需重启）
+    applied: bool,
+    /// 供前端展示的提示语
+    message: String,
+}
+
+/// 保存自定义快捷键（null / 空串表示恢复默认）。
+/// 持久化后会立即重新注册全局快捷键，X11 下无需重启；
+/// Wayland 的 Portal 会话不支持热更，此时返回 applied=false 提示重启。
 #[tauri::command]
 fn set_hotkeys(
     app: AppHandle,
     hotkey_main: Option<String>,
     hotkey_history: Option<String>,
-) -> Result<(), String> {
-    // 基础校验：空字符串视为 null
-    let hotkey_main = hotkey_main.and_then(non_empty);
-    let hotkey_history = hotkey_history.and_then(non_empty);
+) -> Result<HotkeyResult, String> {
+    let hk_main = hotkey_main.and_then(non_empty);
+    let hk_history = hotkey_history.and_then(non_empty);
+
+    // 两个窗口的快捷键不能相同，否则后者会注册失败
+    if let (Some(a), Some(b)) = (&hk_main, &hk_history) {
+        if a.eq_ignore_ascii_case(b) {
+            return Err("两个快捷键不能相同".into());
+        }
+    }
+
+    // 保存旧值，注册失败时回滚，避免留下永远注册不上的死配置
+    let prev = settings_snapshot(&app);
     set_settings(&app, |g| {
-        g.hotkey_main = hotkey_main;
-        g.hotkey_history = hotkey_history;
+        g.hotkey_main = hk_main;
+        g.hotkey_history = hk_history;
     })?;
-    Ok(())
+
+    match rebind_hotkeys(&app) {
+        Ok(true) => Ok(HotkeyResult {
+            applied: true,
+            message: "已生效".into(),
+        }),
+        Ok(false) => Ok(HotkeyResult {
+            applied: false,
+            message: "已保存，重启应用后生效（Wayland 限制）".into(),
+        }),
+        Err(e) => {
+            // 回滚并恢复旧绑定，保证应用始终有可用快捷键
+            let _ = set_settings(&app, |g| {
+                g.hotkey_main = prev.hotkey_main.clone();
+                g.hotkey_history = prev.hotkey_history.clone();
+            });
+            let _ = rebind_hotkeys(&app);
+            Err(e)
+        }
+    }
 }
 
 fn non_empty(s: String) -> Option<String> {

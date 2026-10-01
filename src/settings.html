@@ -48,19 +48,22 @@
         <section class="settings-section">
           <h3 class="settings-h3">快捷键</h3>
           <div class="settings-sub settings-restart-hint">
-            快捷键修改后需要重启应用生效（Wayland 协议限制）
+            格式如 <code>Ctrl+Alt+Q</code> / <code>Super+N</code>；留空表示使用默认值
           </div>
 
           <div class="settings-row">
             <div class="settings-label">
               <div>唤出速记窗口</div>
-              <div class="settings-sub">默认 <code id="hotkey-main-default"></code></div>
+              <div class="settings-sub">
+                默认 <code id="hotkey-main-default"></code> · 当前
+                <code id="hotkey-main-current"></code>
+              </div>
             </div>
             <input
               type="text"
               id="hotkey-main"
               class="settings-input"
-              placeholder="例如 Ctrl+Alt+Space"
+              placeholder="留空用默认值"
               autocomplete="off"
               spellcheck="false"
             />
@@ -69,16 +72,26 @@
           <div class="settings-row">
             <div class="settings-label">
               <div>唤出历史记录</div>
-              <div class="settings-sub">默认 <code id="hotkey-history-default"></code></div>
+              <div class="settings-sub">
+                默认 <code id="hotkey-history-default"></code> · 当前
+                <code id="hotkey-history-current"></code>
+              </div>
             </div>
             <input
               type="text"
               id="hotkey-history"
               class="settings-input"
-              placeholder="例如 Super+H"
+              placeholder="留空用默认值"
               autocomplete="off"
               spellcheck="false"
             />
+          </div>
+
+          <div class="settings-actions">
+            <button id="apply-hotkeys-btn" class="settings-btn">应用快捷键</button>
+            <button id="reset-hotkeys-btn" class="settings-btn settings-btn-ghost">
+              恢复默认
+            </button>
           </div>
         </section>
 

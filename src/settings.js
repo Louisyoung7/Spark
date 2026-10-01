@@ -15,6 +15,10 @@ const els = {
   hotkeyHistory: document.getElementById("hotkey-history"),
   hotkeyMainDefault: document.getElementById("hotkey-main-default"),
   hotkeyHistoryDefault: document.getElementById("hotkey-history-default"),
+  hotkeyMainCurrent: document.getElementById("hotkey-main-current"),
+  hotkeyHistoryCurrent: document.getElementById("hotkey-history-current"),
+  applyHotkeysBtn: document.getElementById("apply-hotkeys-btn"),
+  resetHotkeysBtn: document.getElementById("reset-hotkeys-btn"),
   status: document.getElementById("settings-status"),
 };
 
@@ -54,6 +58,8 @@ async function load() {
   els.hotkeyHistory.value = s.hotkey_history_custom || "";
   els.hotkeyMainDefault.textContent = s.hotkey_main_default;
   els.hotkeyHistoryDefault.textContent = s.hotkey_history_default;
+  els.hotkeyMainCurrent.textContent = s.hotkey_main;
+  els.hotkeyHistoryCurrent.textContent = s.hotkey_history;
 }
 
 listen("reload-settings", load);
@@ -106,7 +112,7 @@ els.resetPathBtn.addEventListener("click", async () => {
 });
 
 // ===== 自定义快捷键 =====
-// 失焦或回车时保存；空字符串视为恢复默认
+// 空字符串视为恢复默认
 function currentMainInput() {
   const v = els.hotkeyMain.value.trim();
   return v === "" ? null : v;
@@ -116,29 +122,37 @@ function currentHistoryInput() {
   return v === "" ? null : v;
 }
 
-async function saveHotkeys() {
+async function applyHotkeys(mainValue, historyValue) {
   try {
-    await invoke("set_hotkeys", {
-      hotkeyMain: currentMainInput(),
-      hotkeyHistory: currentHistoryInput(),
+    const res = await invoke("set_hotkeys", {
+      hotkeyMain: mainValue,
+      hotkeyHistory: historyValue,
     });
-    flashStatus("已保存，重启后生效");
+    await load();
+    flashStatus(res.message);
   } catch (err) {
-    flashStatus(`保存失败：${err}`, true);
+    flashStatus(`${err}`, true);
   }
 }
 
-els.hotkeyMain.addEventListener("blur", saveHotkeys);
-els.hotkeyHistory.addEventListener("blur", saveHotkeys);
-els.hotkeyMain.addEventListener("keydown", (e) => {
-  if (e.key === "Enter") {
-    e.preventDefault();
-    els.hotkeyMain.blur();
-  }
+els.applyHotkeysBtn.addEventListener("click", () =>
+  applyHotkeys(currentMainInput(), currentHistoryInput())
+);
+
+els.resetHotkeysBtn.addEventListener("click", async () => {
+  els.hotkeyMain.value = "";
+  els.hotkeyHistory.value = "";
+  await applyHotkeys(null, null);
 });
-els.hotkeyHistory.addEventListener("keydown", (e) => {
-  if (e.key === "Enter") {
-    e.preventDefault();
-    els.hotkeyHistory.blur();
-  }
-});
+
+// 回车快捷应用
+function bindEnter(input) {
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      applyHotkeys(currentMainInput(), currentHistoryInput());
+    }
+  });
+}
+bindEnter(els.hotkeyMain);
+bindEnter(els.hotkeyHistory);
