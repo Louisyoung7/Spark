@@ -19,6 +19,7 @@ body {
 }
 
 .card {
+  position: relative; /* 供缩放热区与状态提示做绝对定位参照 */
   height: 100%;
   display: flex;
   flex-direction: column;
@@ -31,6 +32,7 @@ body {
 /* ---------- 速记编辑器 ---------- */
 
 .editor-header {
+  position: relative; /* 供拖拽把手居中 */
   display: flex;
   align-items: center;
   gap: 8px;
@@ -162,6 +164,7 @@ body {
 }
 
 .history-header {
+  position: relative; /* 供拖拽把手居中 */
   display: flex;
   align-items: center;
   gap: 8px;
@@ -537,4 +540,88 @@ body {
 /* 把标题栏的关闭按钮推到最右 */
 .header-close {
   margin-left: auto;
+}
+
+/* ---------- 主窗口：缩放 handle 与全屏 ---------- */
+
+/* 全屏时窗口铺满屏幕，去掉圆角与描边 */
+body.fullscreen .card {
+  border-radius: 0;
+  border: none;
+}
+
+/* 无边框窗口的自定义缩放热区 */
+.resize-handle {
+  position: absolute;
+  z-index: 10;
+}
+
+.resize-e {
+  top: 0;
+  right: 0;
+  width: 5px;
+  height: 100%;
+  cursor: ew-resize;
+}
+
+.resize-s {
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 5px;
+  cursor: ns-resize;
+}
+
+.resize-se {
+  bottom: 0;
+  right: 0;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
+}
+
+/* 右下角斜线提示 */
+.resize-se::after {
+  content: "";
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid #585b70;
+  border-bottom: 2px solid #585b70;
+}
+
+.resize-se:hover::after {
+  border-color: #89b4fa;
+}
+
+/* 全屏时不需要缩放热区 */
+body.fullscreen .resize-handle {
+  display: none;
+}
+
+/* ---------- 顶栏拖动窗口 ---------- */
+
+/* 可拖动区域：光标提示为移动 */
+[data-drag-region] {
+  cursor: move;
+  user-select: none;
+}
+
+/* 顶部中央的把手提示（纯装饰，不拦截事件） */
+.drag-grabber {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 36px;
+  height: 4px;
+  border-radius: 2px;
+  background: #45475a;
+  pointer-events: none;
+}
+
+[data-drag-region]:hover .drag-grabber {
+  background: #89b4fa;
 }

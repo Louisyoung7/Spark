@@ -12,6 +12,64 @@ use crate::config::{LABEL_HISTORY, LABEL_MAIN, LABEL_SETTINGS, MIN_VISIBLE, WIN_
 #[derive(Default)]
 pub struct LastShownAt(pub Mutex<Option<Instant>>);
 
+/// 用户是否正在拖拽缩放窗口。
+/// 拖拽期间窗口管理器会让它失焦，此时不能触发「点击外部自动收起」。
+#[derive(Default)]
+pub struct Resizing(pub Mutex<bool>);
+
+/// 开始拖拽缩放：抑制失焦收起
+#[tauri::command]
+pub fn begin_resize(app: AppHandle) {
+    set_resizing(&app, true);
+}
+
+/// 结束拖拽缩放：恢复失焦收起
+#[tauri::command]
+pub fn end_resize(app: AppHandle) {
+    set_resizing(&app, false);
+}
+
+fn set_resizing(app: &AppHandle, value: bool) {
+    if let Some(s) = app.try_state::<Resizing>() {
+        if let Ok(mut g) = s.0.lock() {
+            *g = value;
+        }
+    }
+}
+
+pub fn is_resizing(app: &AppHandle) -> bool {
+    app.try_state::<Resizing>()
+        .and_then(|s| s.0.lock().ok().map(|g| *g))
+        .unwrap_or(false)
+}
+
+/// 清除缩放标记（窗口重新聚焦时调用，兜底防止标记残留导致永不收起）
+pub fn clear_resizing(app: &AppHandle) {
+    set_resizing(app, false);
+}
+
+/// 鼠标是否落在主窗口矩形外扩 `margin` 的范围之内。
+///
+/// 用于区分两种失焦原因：真正点到别处（鼠标远离窗口）与拖拽窗口边缘缩放
+/// （鼠标始终贴着边缘）。拿不到光标或窗口几何信息时返回 false（按外部处理）。
+pub fn cursor_near_main_window(app: &AppHandle, margin: i32) -> bool {
+    let Ok(cursor) = app.cursor_position() else {
+        return false;
+    };
+    let Some(win) = app.get_webview_window(LABEL_MAIN) else {
+        return false;
+    };
+    let (Ok(pos), Ok(size)) = (win.outer_position(), win.outer_size()) else {
+        return false;
+    };
+
+    let (cx, cy) = (cursor.x as i32, cursor.y as i32);
+    cx >= pos.x - margin
+        && cx <= pos.x + size.width as i32 + margin
+        && cy >= pos.y - margin
+        && cy <= pos.y + size.height as i32 + margin
+}
+
 /// 计算"鼠标附近"的窗口物理坐标，并 clamp 到光标所在显示器内。
 /// 拿不到光标位置或匹配不到显示器时返回 None（调用方回退居中）。
 /// 注意：Wayland 下 set_position 会被合成器忽略，属预期平台差异。
@@ -35,8 +93,16 @@ fn position_near_cursor(app: &AppHandle) -> Option<PhysicalPosition<i32>> {
     let y_max = y_min + ms.height as f64 - mh;
 
     // 窗口中心对齐光标，再夹进显示器可视区
-    let x = if x_max > x_min { (cursor.x - mw / 2.0).clamp(x_min, x_max) } else { x_min };
-    let y = if y_max > y_min { (cursor.y - mh / 2.0).clamp(y_min, y_max) } else { y_min };
+    let x = if x_max > x_min {
+        (cursor.x - mw / 2.0).clamp(x_min, x_max)
+    } else {
+        x_min
+    };
+    let y = if y_max > y_min {
+        (cursor.y - mh / 2.0).clamp(y_min, y_max)
+    } else {
+        y_min
+    };
     Some(PhysicalPosition::new(x as i32, y as i32))
 }
 
@@ -149,12 +215,10 @@ pub fn open_settings(app: AppHandle) {
 pub fn main_window_should_auto_hide(app: &AppHandle) -> bool {
     app.try_state::<LastShownAt>()
         .map(|s| {
-            s.0
-                .lock()
+            s.0.lock()
                 .ok()
                 .and_then(|g| g.map(|t| t.elapsed() >= MIN_VISIBLE))
                 .unwrap_or(true)
         })
         .unwrap_or(true)
 }
-

@@ -22,10 +22,15 @@ use std::sync::Mutex;
 use tauri::{Manager, WindowEvent};
 use tauri_plugin_autostart::MacosLauncher;
 
-use crate::config::{is_wayland, LABEL_MAIN, LABEL_SETTINGS, WIN_H, WIN_MIN_H, WIN_MIN_W, WIN_W};
-use crate::hotkeys::{Capturing, abort_capture_if_any, register_on_startup};
+use crate::config::{
+    is_wayland, BLUR_HIDE_MARGIN, LABEL_MAIN, LABEL_SETTINGS, WIN_H, WIN_MIN_H, WIN_MIN_W, WIN_W,
+};
+use crate::hotkeys::{abort_capture_if_any, register_on_startup, Capturing};
 use crate::settings::SettingsState;
-use crate::windows::{LastShownAt, main_window_should_auto_hide, show_main_window};
+use crate::windows::{
+    clear_resizing, cursor_near_main_window, is_resizing, main_window_should_auto_hide,
+    show_main_window, LastShownAt, Resizing,
+};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -45,6 +50,7 @@ pub fn run() {
         ))
         .setup(|app| {
             app.manage(LastShownAt::default());
+            app.manage(Resizing::default());
             app.manage(Capturing::default());
             app.manage(SettingsState(Mutex::new(settings::load_settings(
                 app.handle(),
@@ -64,6 +70,10 @@ pub fn run() {
                 api.prevent_close();
                 let _ = window.hide();
             }
+            WindowEvent::Focused(true) => {
+                // 拖拽缩放结束后窗口重新聚焦，清除抑制标记
+                clear_resizing(window.app_handle());
+            }
             WindowEvent::Focused(false) => {
                 // 设置窗口：若在录制快捷键时切走，恢复绑定，
                 // 否则全局快捷键会一直处于注销状态
@@ -79,9 +89,16 @@ pub fn run() {
                 if window.label() != LABEL_MAIN {
                     return;
                 }
-                if main_window_should_auto_hide(window.app_handle())
-                    && window.is_visible().unwrap_or(false)
-                {
+                let app = window.app_handle();
+                // 前端已上报正在拖拽缩放（异步兜底）
+                if is_resizing(app) {
+                    return;
+                }
+                // 鼠标仍贴着窗口边缘 → 是在拖拽缩放，不是点到别处
+                if cursor_near_main_window(app, BLUR_HIDE_MARGIN) {
+                    return;
+                }
+                if main_window_should_auto_hide(app) && window.is_visible().unwrap_or(false) {
                     let _ = window.hide();
                 }
             }
@@ -98,7 +115,9 @@ pub fn run() {
             hotkeys::set_hotkeys,
             hotkeys::begin_hotkey_capture,
             hotkeys::end_hotkey_capture,
-            windows::open_settings
+            windows::open_settings,
+            windows::begin_resize,
+            windows::end_resize
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
