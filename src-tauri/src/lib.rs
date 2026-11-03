@@ -107,6 +107,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             notes::save_note,
             notes::list_notes,
+            notes::edit_note,
             notes::delete_note,
             settings::get_settings,
             settings::set_autostart,

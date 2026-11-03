@@ -82,6 +82,49 @@ pub fn list_notes(app: AppHandle) -> Result<Vec<NoteEntry>, String> {
     Ok(notes)
 }
 
+/// 编辑指定行（1 起始）的笔记内容，保留原 time；空内容返回错误。
+#[tauri::command]
+pub fn edit_note(app: AppHandle, line: usize, content: String) -> Result<(), String> {
+    let content = content.trim();
+    if content.is_empty() {
+        return Err("内容为空".into());
+    }
+
+    let path = settings::notes_path(&app)?;
+    if !path.exists() {
+        return Err("记录不存在".into());
+    }
+    let text = fs::read_to_string(&path).map_err(|e| format!("读取文件失败: {e}"))?;
+    let mut lines: Vec<String> = text
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| l.to_string())
+        .collect();
+    if line == 0 || line > lines.len() {
+        return Err("记录不存在".into());
+    }
+
+    // 解析原始记录，保留 time，仅更新 content
+    let existing = serde_json::from_str::<serde_json::Value>(&lines[line - 1])
+        .map_err(|e| format!("记录解析失败: {e}"))?;
+    let time = existing
+        .get("time")
+        .and_then(|t| t.as_str())
+        .unwrap_or_default();
+    lines[line - 1] = serde_json::json!({ "time": time, "content": content }).to_string();
+
+    // 先写临时文件再原子替换，避免写一半崩溃损坏数据
+    let tmp = path.with_extension("jsonl.tmp");
+    let body = if lines.is_empty() {
+        String::new()
+    } else {
+        format!("{}\n", lines.join("\n"))
+    };
+    fs::write(&tmp, body).map_err(|e| format!("写入临时文件失败: {e}"))?;
+    fs::rename(&tmp, &path).map_err(|e| format!("替换文件失败: {e}"))?;
+    Ok(())
+}
+
 /// 删除指定行（1 起始）的笔记，其余行写回。
 #[tauri::command]
 pub fn delete_note(app: AppHandle, line: usize) -> Result<(), String> {
