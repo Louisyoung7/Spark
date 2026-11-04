@@ -140,7 +140,48 @@ window.addEventListener("DOMContentLoaded", async () => {
   fullscreenBtn.textContent = fullscreen ? "⤡" : "⛶";
 });
 
+// 幕布式缩进：对光标所在（或选中的多行）每行行首增/减一个 Tab。
+function indentSelection(dir) {
+  const ta = input;
+  const val = ta.value;
+  const selStart = ta.selectionStart;
+  const selEnd = ta.selectionEnd;
+  const blockStart = val.lastIndexOf("\n", selStart - 1) + 1;
+  let blockEnd = val.indexOf("\n", selEnd);
+  if (blockEnd === -1) blockEnd = val.length;
+
+  const lines = val.slice(blockStart, blockEnd).split("\n");
+  let changed = 0;
+  const newLines = lines.map((line) => {
+    if (dir > 0) {
+      changed++;
+      return "\t" + line;
+    }
+    if (line.startsWith("\t")) {
+      changed++;
+      return line.slice(1);
+    }
+    if (line.startsWith(" ")) {
+      changed++;
+      return line.slice(1);
+    }
+    return line;
+  });
+  const newBlock = newLines.join("\n");
+
+  ta.setRangeText(newBlock, blockStart, blockEnd);
+  const delta = dir > 0 ? lines.length : changed;
+  ta.setSelectionRange(selStart + delta, selEnd + delta);
+  updateCount();
+}
+
 input.addEventListener("keydown", (event) => {
+  // Tab / Shift+Tab：幕布式缩进（阻止默认跳出焦点）
+  if (event.key === "Tab") {
+    event.preventDefault();
+    indentSelection(event.shiftKey ? -1 : 1);
+    return;
+  }
   // Ctrl+Enter / Cmd+Enter：保存
   if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
     event.preventDefault();
