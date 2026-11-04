@@ -65,7 +65,8 @@ jobs:
           for f in src/*.html; do
             echo "检查 $f"
             # 校验 script / link 引用的本地文件是否存在
-            grep -oE '(src|href)="/[^"]+"' "$f" \
+            # 注意：grep 无匹配会返回 1，需 || true 避免被 set -e / pipefail 误判为失败
+            grep -oE '(src|href)="/[^"]+"' "$f" || true \
               | sed -E 's/.*="\/([^"]+)"/\1/' \
               | while read -r asset; do
                   if [ ! -f "src/$asset" ]; then

@@ -1,3 +1,5 @@
+import { createEditor, indentSelection, enterWithIndent } from "./editor/index.js";
+
 const { invoke } = window.__TAURI__.core;
 const { getCurrentWindow } = window.__TAURI__.window;
 const { listen } = window.__TAURI__.event;
@@ -13,21 +15,26 @@ function enableWindowDragging(header) {
     appWindow.startDragging();
   });
 }
-const input = document.getElementById("note-input");
+
+const host = document.getElementById("note-input");
 const status = document.getElementById("status");
 const saveBtn = document.getElementById("save-btn");
 const wordCount = document.getElementById("word-count");
 const fullscreenBtn = document.getElementById("fullscreen-btn");
 
-// 聚焦输入框并把光标移到末尾（草稿保留时接着输入）
+let editorView;
+let fullscreen = false;
+
+// 聚焦编辑器并把光标移到末尾（草稿保留时接着输入）
 function focusInput() {
-  input.focus();
-  const len = input.value.length;
-  input.setSelectionRange(len, len);
+  if (!editorView) return;
+  editorView.focus();
+  const len = editorView.state.doc.length;
+  editorView.dispatch({ selection: { anchor: len } });
 }
 
 function updateCount() {
-  const text = input.value;
+  const text = editorView ? editorView.state.doc.toString() : "";
   if (!text) {
     wordCount.textContent = "";
     return;
@@ -36,7 +43,53 @@ function updateCount() {
   const lines = text.split("\n").length;
   wordCount.textContent = `${chars} 字 · ${lines} 行`;
 }
-input.addEventListener("input", updateCount);
+
+// Esc：全屏时先退出全屏，再次按 Esc 才收起窗口
+function handleEscape() {
+  if (fullscreen) {
+    setFullscreen(false);
+    return;
+  }
+  appWindow.hide();
+}
+
+// 用 CodeMirror 取代原生 textarea：列表标记实时渲染为圆点，仍保留纯文本存储。
+// 快捷键（Tab 缩进 / Enter 续行 / Ctrl+Enter 保存 / Esc 取消 / F11 全屏）走自定义 keymap。
+editorView = createEditor({
+  parent: host,
+  placeholder: "记点什么…\n\nEnter 换行，Ctrl+Enter 保存",
+  onDocChange: () => updateCount(),
+  commands: {
+    Tab: (v) => {
+      indentSelection(v, 1);
+      return true;
+    },
+    "Shift-Tab": (v) => {
+      indentSelection(v, -1);
+      return true;
+    },
+    Enter: (v) => {
+      enterWithIndent(v);
+      return true;
+    },
+    "Ctrl-Enter": () => {
+      saveNote();
+      return true;
+    },
+    "Mod-Enter": () => {
+      saveNote();
+      return true;
+    },
+    Escape: () => {
+      handleEscape();
+      return true;
+    },
+    F11: () => {
+      toggleFullscreen();
+      return true;
+    },
+  },
+});
 
 window.addEventListener("DOMContentLoaded", () => {
   focusInput();
@@ -61,7 +114,7 @@ function flashStatus(text, isError = false) {
 }
 
 function saveNote() {
-  const content = input.value.trim();
+  const content = editorView.state.doc.toString().trim();
   if (!content) {
     // 空内容：直接隐藏，不写入
     appWindow.hide();
@@ -69,7 +122,9 @@ function saveNote() {
   }
   invoke("save_note", { content })
     .then(() => {
-      input.value = ""; // 保存成功后清空；草稿仅在取消时保留
+      editorView.dispatch({
+        changes: { from: 0, to: editorView.state.doc.length, insert: "" },
+      });
       updateCount();
       appWindow.hide();
     })
@@ -117,8 +172,6 @@ for (const handle of document.querySelectorAll("[data-resize]")) {
 document.addEventListener("mouseup", finishResize);
 
 // ===== 全屏 =====
-let fullscreen = false;
-
 async function setFullscreen(next) {
   await appWindow.setFullscreen(next);
   fullscreen = next;
@@ -138,30 +191,4 @@ window.addEventListener("DOMContentLoaded", async () => {
   fullscreen = await appWindow.isFullscreen().catch(() => false);
   document.body.classList.toggle("fullscreen", fullscreen);
   fullscreenBtn.textContent = fullscreen ? "⤡" : "⛶";
-});
-
-input.addEventListener("keydown", (event) => {
-  // Ctrl+Enter / Cmd+Enter：保存
-  if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
-    event.preventDefault();
-    saveNote();
-    return;
-  }
-  // F11：切换全屏
-  if (event.key === "F11") {
-    event.preventDefault();
-    toggleFullscreen();
-    return;
-  }
-  // 其余按键走默认行为：Enter 换行、Shift+Enter 换行、正常编辑
-  if (event.key === "Escape") {
-    event.preventDefault();
-    // 全屏时先退出全屏，再次按 Esc 才收起窗口
-    if (fullscreen) {
-      setFullscreen(false);
-      return;
-    }
-    // 取消：保留草稿，隐藏窗口
-    appWindow.hide();
-  }
 });

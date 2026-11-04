@@ -55,24 +55,17 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-#note-input {
-  flex: 1;
-  width: 100%;
-  resize: none;
-  overflow-y: auto;
-  font-size: 15px;
-  line-height: 1.7;
-  padding: 14px 16px;
-  color: #cdd6f4;
-  background: transparent;
-  border: none;
-  outline: none;
-  user-select: text;
-  font-family: inherit;
+/* 编辑框内联大纲渲染：overlay 装饰层与 textarea 逐字符对齐，把 - / * / + 渲染为圆点 */
+.editor-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
-#note-input::placeholder {
-  color: #585b70;
+/* CodeMirror 编辑器挂载点：绝对填充编辑容器 */
+.cm-host {
+  position: absolute;
+  inset: 0;
 }
 
 .editor-footer {
@@ -111,13 +104,7 @@ body {
   background: #5d92ee;
 }
 
-#note-input:focus {
-  border-color: #89b4fa;
-}
-
-#note-input::placeholder {
-  color: #6c7086;
-}
+/* 占位符 / 焦点样式已并入 .editor-surface */
 
 .status {
   position: absolute;
@@ -220,8 +207,26 @@ body {
   color: #cdd6f4;
   line-height: 1.5;
   word-break: break-all;
-  white-space: pre-wrap;
+  white-space: normal;
   user-select: text;
+}
+
+.history-item-content p {
+  margin: 2px 0;
+}
+
+.history-item-content ul {
+  margin: 2px 0;
+  padding-left: 20px;
+  list-style: disc;
+}
+
+.history-item-content li {
+  margin: 2px 0;
+}
+
+.history-item-content li::marker {
+  color: #6c7086;
 }
 
 .history-item-actions {
@@ -275,21 +280,7 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-.edit-text {
-  flex: 1;
-  width: 100%;
-  resize: none;
-  overflow-y: auto;
-  font-size: 15px;
-  line-height: 1.7;
-  padding: 14px 16px;
-  color: #cdd6f4;
-  background: transparent;
-  border: none;
-  outline: none;
-  user-select: text;
-  font-family: inherit;
-}
+/* 历史编辑框复用 .editor-surface */
 
 .edit-view-footer {
   display: flex;

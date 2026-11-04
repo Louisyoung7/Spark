@@ -1,3 +1,5 @@
+import { createEditor, indentSelection, enterWithIndent, EditorView } from "./editor/index.js";
+
 const { invoke } = window.__TAURI__.core;
 const { getCurrentWindow } = window.__TAURI__.window;
 const { listen } = window.__TAURI__.event;
@@ -47,6 +49,79 @@ function escapeHtml(s) {
   );
 }
 
+// 幕布式无序列表渲染：把带缩进的「- / * / + 」行渲染成嵌套 <ul>。
+// 非列表行按原换行保留为段落；笔记仍以纯文本存储，这里只做展示层转换。
+function renderOutline(text) {
+  const lines = text.split("\n");
+  let out = "";
+  const stack = []; // 各打开层级的缩进宽度
+  let paraBuf = [];
+
+  const indentOf = (line) => {
+    let n = 0;
+    for (const ch of line) {
+      if (ch === " " || ch === "\t") n++;
+      else break;
+    }
+    return n;
+  };
+  const isItem = (line) =>
+    /^[-*+]\s/.test(line.trimStart()) || /^[-*+]$/.test(line.trim());
+  const itemText = (line) => line.trimStart().replace(/^[-*+]\s?/, "");
+
+  const flushPara = () => {
+    if (paraBuf.length) {
+      out += `<p>${paraBuf.map(escapeHtml).join("<br>")}</p>`;
+      paraBuf = [];
+    }
+  };
+
+  for (const raw of lines) {
+    if (raw.trim() === "") {
+      flushPara();
+      while (stack.length) {
+        out += "</li></ul>";
+        stack.pop();
+      }
+      continue;
+    }
+    const indent = indentOf(raw);
+    if (!isItem(raw)) {
+      flushPara();
+      while (stack.length) {
+        out += "</li></ul>";
+        stack.pop();
+      }
+      paraBuf.push(raw);
+      continue;
+    }
+    flushPara();
+    const content = escapeHtml(itemText(raw));
+    while (stack.length && indent < stack[stack.length - 1]) {
+      out += "</li></ul>";
+      stack.pop();
+    }
+    if (stack.length === 0) {
+      out += "<ul>";
+      stack.push(indent);
+      out += `<li>${content}`;
+    } else if (indent > stack[stack.length - 1]) {
+      out += "<ul>";
+      stack.push(indent);
+      out += `<li>${content}`;
+    } else {
+      out += "</li>";
+      out += `<li>${content}`;
+    }
+  }
+  flushPara();
+  while (stack.length) {
+    out += "</li></ul>";
+    stack.pop();
+  }
+  return out;
+}
+
 async function copyText(text) {
   try {
     await navigator.clipboard.writeText(text);
@@ -75,11 +150,11 @@ function render(notes) {
     item.className = "history-item";
     item.innerHTML = `
       <div class="history-item-time">${escapeHtml(formatTime(note.time))}</div>
-      <div class="history-item-content">${escapeHtml(note.content)}</div>
+      <div class="history-item-content">${renderOutline(note.content)}</div>
       <div class="history-item-actions">
-        <button class="icon-btn act-copy" title="复制">复制</button>
-        <button class="icon-btn act-edit" title="编辑">编辑</button>
-        <button class="icon-btn act-del" title="删除">删除</button>
+        <button class="icon-btn act-copy" title="复制" tabindex="-1">复制</button>
+        <button class="icon-btn act-edit" title="编辑" tabindex="-1">编辑</button>
+        <button class="icon-btn act-del" title="删除" tabindex="-1">删除</button>
       </div>`;
     item.querySelector(".act-copy").addEventListener("click", async () => {
       const ok = await copyText(note.content);
@@ -101,19 +176,25 @@ function render(notes) {
 
 // 进入编辑态：弹出覆盖全窗口的大编辑视图（与速记编辑器一致）。
 let editingNote = null;
+let editEditor;
 
 function enterEdit(note) {
   editingNote = note;
   editTime.textContent = formatTime(note.time);
-  editText.value = note.content;
+  editEditor.dispatch({
+    changes: { from: 0, to: editEditor.state.doc.length, insert: note.content },
+  });
   updateEditCount();
   editView.classList.remove("hidden");
-  editText.focus();
-  editText.setSelectionRange(editText.value.length, editText.value.length);
+  editEditor.focus();
+  const len = editEditor.state.doc.length;
+  editEditor.dispatch({ selection: { anchor: len } });
+  // 编辑视图从隐藏切到显示，主动触发一次布局测量，避免首帧尺寸为 0
+  editEditor.requestMeasure();
 }
 
 function updateEditCount() {
-  const text = editText.value;
+  const text = editEditor.state.doc.toString();
   if (!text) {
     editCount.textContent = "";
     return;
@@ -122,7 +203,6 @@ function updateEditCount() {
   const lines = text.split("\n").length;
   editCount.textContent = `${chars} 字 · ${lines} 行`;
 }
-editText.addEventListener("input", updateEditCount);
 
 function exitEdit() {
   editingNote = null;
@@ -132,22 +212,9 @@ function exitEdit() {
 editSave.addEventListener("click", saveEdit);
 editCancel.addEventListener("click", exitEdit);
 
-// 编辑态：Ctrl+Enter 保存，Esc 取消（stopPropagation 阻止窗口级 Esc 关闭窗口）
-editText.addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
-    e.preventDefault();
-    e.stopPropagation();
-    saveEdit();
-  } else if (e.key === "Escape") {
-    e.preventDefault();
-    e.stopPropagation();
-    exitEdit();
-  }
-});
-
 async function saveEdit() {
   if (!editingNote) return;
-  const content = editText.value.trim();
+  const content = editEditor.state.doc.toString().trim();
   if (!content) {
     showToast("内容不能为空");
     return;
@@ -191,4 +258,47 @@ document.getElementById("settings-btn").addEventListener("click", () => {
 });
 window.addEventListener("keydown", (event) => {
   if (event.key === "Escape") hideWindow();
+});
+
+// 编辑态的 CodeMirror 实例：列表标记实时渲染为圆点，复用与速记一致的快捷键。
+// Esc 在编辑态下由 domEventHandlers 拦截并阻止冒泡，避免误触关闭整个历史窗口。
+editEditor = createEditor({
+  parent: editText,
+  placeholder: "记点什么…",
+  onDocChange: () => updateEditCount(),
+  commands: {
+    Tab: (v) => {
+      indentSelection(v, 1);
+      return true;
+    },
+    "Shift-Tab": (v) => {
+      indentSelection(v, -1);
+      return true;
+    },
+    Enter: (v) => {
+      enterWithIndent(v);
+      return true;
+    },
+    "Ctrl-Enter": () => {
+      saveEdit();
+      return true;
+    },
+    "Mod-Enter": () => {
+      saveEdit();
+      return true;
+    },
+  },
+  extensions: [
+    EditorView.domEventHandlers({
+      keydown(e) {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          e.stopPropagation();
+          exitEdit();
+          return true;
+        }
+        return false;
+      },
+    }),
+  ],
 });
