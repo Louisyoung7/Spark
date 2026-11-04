@@ -171,15 +171,50 @@ function indentSelection(dir) {
 
   ta.setRangeText(newBlock, blockStart, blockEnd);
   const delta = dir > 0 ? lines.length : changed;
-  ta.setSelectionRange(selStart + delta, selEnd + delta);
+  const max = ta.value.length;
+  ta.setSelectionRange(
+    Math.max(0, Math.min(max, selStart + delta)),
+    Math.max(0, Math.min(max, selEnd + delta))
+  );
   updateCount();
+}
+
+// 回车继承缩进：插入换行 + 当前行前导空白；当前行为空（仅缩进）则不继承并清除缩进退出层级。
+function enterWithIndent(ta) {
+  const val = ta.value;
+  const pos = ta.selectionStart;
+  const selEnd = ta.selectionEnd;
+  const lineStart = val.lastIndexOf("\n", pos - 1) + 1;
+  const beforeCursor = val.slice(lineStart, pos);
+  const indentMatch = beforeCursor.match(/^[ \t]*/);
+  const indent = indentMatch ? indentMatch[0] : "";
+  const contentAfterIndent = beforeCursor.slice(indent.length);
+  if (contentAfterIndent.trim() === "") {
+    ta.setRangeText("\n", lineStart, selEnd);
+    ta.selectionStart = ta.selectionEnd = lineStart + 1;
+  } else {
+    const insert = "\n" + indent;
+    ta.setRangeText(insert, pos, selEnd);
+    ta.selectionStart = ta.selectionEnd = pos + insert.length;
+  }
 }
 
 input.addEventListener("keydown", (event) => {
   // Tab / Shift+Tab：幕布式缩进（阻止默认跳出焦点）
-  if (event.key === "Tab") {
+  if (event.key === "Tab" || event.code === "Tab") {
     event.preventDefault();
+    event.stopPropagation();
     indentSelection(event.shiftKey ? -1 : 1);
+    // 双保险：个别 webview 中 preventDefault 未能阻止 Tab 焦点移动，确保焦点留在编辑框
+    setTimeout(() => {
+      if (document.activeElement !== input) input.focus();
+    }, 0);
+    return;
+  }
+  // 普通 Enter：换行并继承当前行缩进（幕布式）
+  if (event.key === "Enter" && !event.ctrlKey && !event.metaKey) {
+    event.preventDefault();
+    enterWithIndent(input);
     return;
   }
   // Ctrl+Enter / Cmd+Enter：保存
