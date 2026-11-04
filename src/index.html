@@ -5,7 +5,7 @@
     <link rel="stylesheet" href="styles.css" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Spark</title>
-    <script type="module" src="/main.js" defer></script>
+    <script type="module" src="./main.js"></script>
   </head>
 
   <body>
@@ -17,15 +17,7 @@
         <button id="fullscreen-btn" class="icon-btn" title="全屏 (F11)" tabindex="-1">⛶</button>
       </header>
       <div class="editor-wrap">
-        <textarea
-          id="note-input"
-          class="editor-surface"
-          placeholder="记点什么…&#10;&#10;Enter 换行，Ctrl+Enter 保存"
-          autocomplete="off"
-          spellcheck="false"
-          autofocus
-        ></textarea>
-        <div id="note-overlay" class="editor-overlay" aria-hidden="true"></div>
+        <div id="note-input" class="cm-host"></div>
       </div>
       <footer class="editor-footer">
         <span class="hint">Alt+Q 速记 · Ctrl+Alt+Q 历史 · Esc 收起</span>

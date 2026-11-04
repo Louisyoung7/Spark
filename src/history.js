@@ -1,4 +1,4 @@
-import { syncOutline } from "./outline.js";
+import { createEditor, indentSelection, enterWithIndent, EditorView } from "./editor/index.js";
 
 const { invoke } = window.__TAURI__.core;
 const { getCurrentWindow } = window.__TAURI__.window;
@@ -26,7 +26,6 @@ const editTime = document.getElementById("edit-time");
 const editCount = document.getElementById("edit-count");
 const editSave = document.getElementById("edit-save");
 const editCancel = document.getElementById("edit-cancel");
-const editTextOverlay = document.getElementById("edit-overlay");
 
 let toastTimer = null;
 function showToast(text) {
@@ -177,20 +176,25 @@ function render(notes) {
 
 // 进入编辑态：弹出覆盖全窗口的大编辑视图（与速记编辑器一致）。
 let editingNote = null;
+let editEditor;
 
 function enterEdit(note) {
   editingNote = note;
   editTime.textContent = formatTime(note.time);
-  editText.value = note.content;
+  editEditor.dispatch({
+    changes: { from: 0, to: editEditor.state.doc.length, insert: note.content },
+  });
   updateEditCount();
   editView.classList.remove("hidden");
-  editText.focus();
-  editText.setSelectionRange(editText.value.length, editText.value.length);
-  syncOutline(editText, editTextOverlay);
+  editEditor.focus();
+  const len = editEditor.state.doc.length;
+  editEditor.dispatch({ selection: { anchor: len } });
+  // 编辑视图从隐藏切到显示，主动触发一次布局测量，避免首帧尺寸为 0
+  editEditor.requestMeasure();
 }
 
 function updateEditCount() {
-  const text = editText.value;
+  const text = editEditor.state.doc.toString();
   if (!text) {
     editCount.textContent = "";
     return;
@@ -199,14 +203,6 @@ function updateEditCount() {
   const lines = text.split("\n").length;
   editCount.textContent = `${chars} 字 · ${lines} 行`;
 }
-editText.addEventListener("input", () => {
-  updateEditCount();
-  syncOutline(editText, editTextOverlay);
-});
-editText.addEventListener("scroll", () => {
-  editTextOverlay.scrollTop = editText.scrollTop;
-  editTextOverlay.scrollLeft = editText.scrollLeft;
-});
 
 function exitEdit() {
   editingNote = null;
@@ -216,100 +212,9 @@ function exitEdit() {
 editSave.addEventListener("click", saveEdit);
 editCancel.addEventListener("click", exitEdit);
 
-// 幕布式缩进（作用于任意 textarea）：对光标行/选中多行行首增/减一个 Tab。
-function indentTextarea(ta, dir) {
-  const val = ta.value;
-  const selStart = ta.selectionStart;
-  const selEnd = ta.selectionEnd;
-  const blockStart = val.lastIndexOf("\n", selStart - 1) + 1;
-  let blockEnd = val.indexOf("\n", selEnd);
-  if (blockEnd === -1) blockEnd = val.length;
-
-  const lines = val.slice(blockStart, blockEnd).split("\n");
-  let changed = 0;
-  const newLines = lines.map((line) => {
-    if (dir > 0) {
-      changed++;
-      return "\t" + line;
-    }
-    if (line.startsWith("\t")) {
-      changed++;
-      return line.slice(1);
-    }
-    if (line.startsWith(" ")) {
-      changed++;
-      return line.slice(1);
-    }
-    return line;
-  });
-  const newBlock = newLines.join("\n");
-
-  ta.setRangeText(newBlock, blockStart, blockEnd);
-  const delta = dir > 0 ? lines.length : changed;
-  const max = ta.value.length;
-  ta.setSelectionRange(
-    Math.max(0, Math.min(max, selStart + delta)),
-    Math.max(0, Math.min(max, selEnd + delta))
-  );
-}
-
-// 回车继承缩进：插入换行 + 当前行前导空白；当前行为空（仅缩进）则不继承并清除缩进退出层级。
-function enterWithIndent(ta) {
-  const val = ta.value;
-  const pos = ta.selectionStart;
-  const selEnd = ta.selectionEnd;
-  const lineStart = val.lastIndexOf("\n", pos - 1) + 1;
-  const beforeCursor = val.slice(lineStart, pos);
-  const indentMatch = beforeCursor.match(/^[ \t]*/);
-  const indent = indentMatch ? indentMatch[0] : "";
-  const contentAfterIndent = beforeCursor.slice(indent.length);
-  if (contentAfterIndent.trim() === "") {
-    ta.setRangeText("\n", lineStart, selEnd);
-    ta.selectionStart = ta.selectionEnd = lineStart + 1;
-  } else {
-    const insert = "\n" + indent;
-    ta.setRangeText(insert, pos, selEnd);
-    ta.selectionStart = ta.selectionEnd = pos + insert.length;
-  }
-}
-
-// 编辑态：Tab 缩进；Enter 继承缩进；Ctrl+Enter 保存；Esc 取消
-editText.addEventListener("keydown", (e) => {
-  if (e.key === "Tab" || e.code === "Tab") {
-    e.preventDefault();
-    e.stopPropagation();
-    indentTextarea(editText, e.shiftKey ? -1 : 1);
-    updateEditCount();
-    // 双保险：个别 webview 中 preventDefault 未能阻止 Tab 焦点移动，确保焦点留在编辑框
-    setTimeout(() => {
-      if (!editView.classList.contains("hidden") && document.activeElement !== editText) {
-        editText.focus();
-      }
-    }, 0);
-    return;
-  }
-  // 普通 Enter：换行并继承当前行缩进（幕布式）
-  if (e.key === "Enter" && !e.ctrlKey && !e.metaKey) {
-    e.preventDefault();
-    e.stopPropagation();
-    enterWithIndent(editText);
-    updateEditCount();
-    return;
-  }
-  if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
-    e.preventDefault();
-    e.stopPropagation();
-    saveEdit();
-  } else if (e.key === "Escape") {
-    e.preventDefault();
-    e.stopPropagation();
-    exitEdit();
-  }
-});
-
 async function saveEdit() {
   if (!editingNote) return;
-  const content = editText.value.trim();
+  const content = editEditor.state.doc.toString().trim();
   if (!content) {
     showToast("内容不能为空");
     return;
@@ -353,4 +258,47 @@ document.getElementById("settings-btn").addEventListener("click", () => {
 });
 window.addEventListener("keydown", (event) => {
   if (event.key === "Escape") hideWindow();
+});
+
+// 编辑态的 CodeMirror 实例：列表标记实时渲染为圆点，复用与速记一致的快捷键。
+// Esc 在编辑态下由 domEventHandlers 拦截并阻止冒泡，避免误触关闭整个历史窗口。
+editEditor = createEditor({
+  parent: editText,
+  placeholder: "记点什么…",
+  onDocChange: () => updateEditCount(),
+  commands: {
+    Tab: (v) => {
+      indentSelection(v, 1);
+      return true;
+    },
+    "Shift-Tab": (v) => {
+      indentSelection(v, -1);
+      return true;
+    },
+    Enter: (v) => {
+      enterWithIndent(v);
+      return true;
+    },
+    "Ctrl-Enter": () => {
+      saveEdit();
+      return true;
+    },
+    "Mod-Enter": () => {
+      saveEdit();
+      return true;
+    },
+  },
+  extensions: [
+    EditorView.domEventHandlers({
+      keydown(e) {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          e.stopPropagation();
+          exitEdit();
+          return true;
+        }
+        return false;
+      },
+    }),
+  ],
 });

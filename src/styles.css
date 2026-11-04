@@ -62,58 +62,10 @@ body {
   min-height: 0;
 }
 
-.editor-surface,
-.editor-overlay {
+/* CodeMirror 编辑器挂载点：绝对填充编辑容器 */
+.cm-host {
   position: absolute;
   inset: 0;
-  margin: 0;
-  border: 0;
-  padding: 14px 16px;
-  font-family: inherit;
-  font-size: 15px;
-  line-height: 1.7;
-  letter-spacing: normal;
-  white-space: pre-wrap;
-  tab-size: 4;
-  box-sizing: border-box;
-  width: 100%;
-  height: 100%;
-}
-
-.editor-surface {
-  resize: none;
-  overflow-y: auto;
-  overflow-x: hidden;
-  color: #cdd6f4;
-  background: transparent;
-  outline: none;
-  user-select: text;
-  z-index: 1;
-}
-
-.editor-surface::placeholder {
-  color: #6c7086;
-}
-
-.editor-overlay {
-  z-index: 2;
-  pointer-events: none;
-  overflow: hidden;
-  color: transparent;
-  user-select: none;
-}
-
-.bullet {
-  position: relative;
-  color: transparent;
-}
-
-.bullet::before {
-  content: "\2022";
-  position: absolute;
-  left: 0;
-  top: 0;
-  color: #89b4fa;
 }
 
 .editor-footer {

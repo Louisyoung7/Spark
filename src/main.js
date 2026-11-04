@@ -1,4 +1,4 @@
-import { syncOutline } from "./outline.js";
+import { createEditor, indentSelection, enterWithIndent } from "./editor/index.js";
 
 const { invoke } = window.__TAURI__.core;
 const { getCurrentWindow } = window.__TAURI__.window;
@@ -15,22 +15,26 @@ function enableWindowDragging(header) {
     appWindow.startDragging();
   });
 }
-const input = document.getElementById("note-input");
-const inputOverlay = document.getElementById("note-overlay");
+
+const host = document.getElementById("note-input");
 const status = document.getElementById("status");
 const saveBtn = document.getElementById("save-btn");
 const wordCount = document.getElementById("word-count");
 const fullscreenBtn = document.getElementById("fullscreen-btn");
 
-// 聚焦输入框并把光标移到末尾（草稿保留时接着输入）
+let editorView;
+let fullscreen = false;
+
+// 聚焦编辑器并把光标移到末尾（草稿保留时接着输入）
 function focusInput() {
-  input.focus();
-  const len = input.value.length;
-  input.setSelectionRange(len, len);
+  if (!editorView) return;
+  editorView.focus();
+  const len = editorView.state.doc.length;
+  editorView.dispatch({ selection: { anchor: len } });
 }
 
 function updateCount() {
-  const text = input.value;
+  const text = editorView ? editorView.state.doc.toString() : "";
   if (!text) {
     wordCount.textContent = "";
     return;
@@ -39,19 +43,57 @@ function updateCount() {
   const lines = text.split("\n").length;
   wordCount.textContent = `${chars} 字 · ${lines} 行`;
 }
-input.addEventListener("input", () => {
-  updateCount();
-  syncOutline(input, inputOverlay);
-});
-input.addEventListener("scroll", () => {
-  inputOverlay.scrollTop = input.scrollTop;
-  inputOverlay.scrollLeft = input.scrollLeft;
+
+// Esc：全屏时先退出全屏，再次按 Esc 才收起窗口
+function handleEscape() {
+  if (fullscreen) {
+    setFullscreen(false);
+    return;
+  }
+  appWindow.hide();
+}
+
+// 用 CodeMirror 取代原生 textarea：列表标记实时渲染为圆点，仍保留纯文本存储。
+// 快捷键（Tab 缩进 / Enter 续行 / Ctrl+Enter 保存 / Esc 取消 / F11 全屏）走自定义 keymap。
+editorView = createEditor({
+  parent: host,
+  placeholder: "记点什么…\n\nEnter 换行，Ctrl+Enter 保存",
+  onDocChange: () => updateCount(),
+  commands: {
+    Tab: (v) => {
+      indentSelection(v, 1);
+      return true;
+    },
+    "Shift-Tab": (v) => {
+      indentSelection(v, -1);
+      return true;
+    },
+    Enter: (v) => {
+      enterWithIndent(v);
+      return true;
+    },
+    "Ctrl-Enter": () => {
+      saveNote();
+      return true;
+    },
+    "Mod-Enter": () => {
+      saveNote();
+      return true;
+    },
+    Escape: () => {
+      handleEscape();
+      return true;
+    },
+    F11: () => {
+      toggleFullscreen();
+      return true;
+    },
+  },
 });
 
 window.addEventListener("DOMContentLoaded", () => {
   focusInput();
   updateCount();
-  syncOutline(input, inputOverlay);
 });
 
 // Rust 侧每次显示 / 重新聚焦窗口后都会发该事件，作为 DOM 焦点兜底
@@ -72,7 +114,7 @@ function flashStatus(text, isError = false) {
 }
 
 function saveNote() {
-  const content = input.value.trim();
+  const content = editorView.state.doc.toString().trim();
   if (!content) {
     // 空内容：直接隐藏，不写入
     appWindow.hide();
@@ -80,7 +122,9 @@ function saveNote() {
   }
   invoke("save_note", { content })
     .then(() => {
-      input.value = ""; // 保存成功后清空；草稿仅在取消时保留
+      editorView.dispatch({
+        changes: { from: 0, to: editorView.state.doc.length, insert: "" },
+      });
       updateCount();
       appWindow.hide();
     })
@@ -128,8 +172,6 @@ for (const handle of document.querySelectorAll("[data-resize]")) {
 document.addEventListener("mouseup", finishResize);
 
 // ===== 全屏 =====
-let fullscreen = false;
-
 async function setFullscreen(next) {
   await appWindow.setFullscreen(next);
   fullscreen = next;
@@ -149,106 +191,4 @@ window.addEventListener("DOMContentLoaded", async () => {
   fullscreen = await appWindow.isFullscreen().catch(() => false);
   document.body.classList.toggle("fullscreen", fullscreen);
   fullscreenBtn.textContent = fullscreen ? "⤡" : "⛶";
-});
-
-// 幕布式缩进：对光标所在（或选中的多行）每行行首增/减一个 Tab。
-function indentSelection(dir) {
-  const ta = input;
-  const val = ta.value;
-  const selStart = ta.selectionStart;
-  const selEnd = ta.selectionEnd;
-  const blockStart = val.lastIndexOf("\n", selStart - 1) + 1;
-  let blockEnd = val.indexOf("\n", selEnd);
-  if (blockEnd === -1) blockEnd = val.length;
-
-  const lines = val.slice(blockStart, blockEnd).split("\n");
-  let changed = 0;
-  const newLines = lines.map((line) => {
-    if (dir > 0) {
-      changed++;
-      return "\t" + line;
-    }
-    if (line.startsWith("\t")) {
-      changed++;
-      return line.slice(1);
-    }
-    if (line.startsWith(" ")) {
-      changed++;
-      return line.slice(1);
-    }
-    return line;
-  });
-  const newBlock = newLines.join("\n");
-
-  ta.setRangeText(newBlock, blockStart, blockEnd);
-  const delta = dir > 0 ? lines.length : changed;
-  const max = ta.value.length;
-  ta.setSelectionRange(
-    Math.max(0, Math.min(max, selStart + delta)),
-    Math.max(0, Math.min(max, selEnd + delta))
-  );
-  updateCount();
-}
-
-// 回车继承缩进：插入换行 + 当前行前导空白；当前行为空（仅缩进）则不继承并清除缩进退出层级。
-function enterWithIndent(ta) {
-  const val = ta.value;
-  const pos = ta.selectionStart;
-  const selEnd = ta.selectionEnd;
-  const lineStart = val.lastIndexOf("\n", pos - 1) + 1;
-  const beforeCursor = val.slice(lineStart, pos);
-  const indentMatch = beforeCursor.match(/^[ \t]*/);
-  const indent = indentMatch ? indentMatch[0] : "";
-  const contentAfterIndent = beforeCursor.slice(indent.length);
-  if (contentAfterIndent.trim() === "") {
-    ta.setRangeText("\n", lineStart, selEnd);
-    ta.selectionStart = ta.selectionEnd = lineStart + 1;
-  } else {
-    const insert = "\n" + indent;
-    ta.setRangeText(insert, pos, selEnd);
-    ta.selectionStart = ta.selectionEnd = pos + insert.length;
-  }
-}
-
-input.addEventListener("keydown", (event) => {
-  // Tab / Shift+Tab：幕布式缩进（阻止默认跳出焦点）
-  if (event.key === "Tab" || event.code === "Tab") {
-    event.preventDefault();
-    event.stopPropagation();
-    indentSelection(event.shiftKey ? -1 : 1);
-    // 双保险：个别 webview 中 preventDefault 未能阻止 Tab 焦点移动，确保焦点留在编辑框
-    setTimeout(() => {
-      if (document.activeElement !== input) input.focus();
-    }, 0);
-    return;
-  }
-  // 普通 Enter：换行并继承当前行缩进（幕布式）
-  if (event.key === "Enter" && !event.ctrlKey && !event.metaKey) {
-    event.preventDefault();
-    enterWithIndent(input);
-    return;
-  }
-  // Ctrl+Enter / Cmd+Enter：保存
-  if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
-    event.preventDefault();
-    saveNote();
-    return;
-  }
-  // F11：切换全屏
-  if (event.key === "F11") {
-    event.preventDefault();
-    toggleFullscreen();
-    return;
-  }
-  // 其余按键走默认行为：Enter 换行、Shift+Enter 换行、正常编辑
-  if (event.key === "Escape") {
-    event.preventDefault();
-    // 全屏时先退出全屏，再次按 Esc 才收起窗口
-    if (fullscreen) {
-      setFullscreen(false);
-      return;
-    }
-    // 取消：保留草稿，隐藏窗口
-    appWindow.hide();
-  }
 });

@@ -5,7 +5,7 @@
     <link rel="stylesheet" href="styles.css" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Spark 历史记录</title>
-    <script type="module" src="/history.js" defer></script>
+    <script type="module" src="./history.js"></script>
   </head>
 
   <body>
@@ -30,14 +30,7 @@
           <span id="edit-count" class="edit-view-count"></span>
         </header>
         <div class="editor-wrap">
-          <textarea
-            id="edit-text"
-            class="editor-surface"
-            placeholder="记点什么…"
-            autocomplete="off"
-            spellcheck="false"
-          ></textarea>
-          <div id="edit-overlay" class="editor-overlay" aria-hidden="true"></div>
+          <div id="edit-text" class="cm-host"></div>
         </div>
         <footer class="edit-view-footer">
           <span class="hint">Ctrl+Enter 保存 · Esc 取消</span>
