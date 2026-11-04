@@ -21,6 +21,28 @@
       <div id="empty" class="history-empty hidden">
         还没有记录<br /><span class="dim">按 Alt+Q 写下第一条速记</span>
       </div>
+
+      <!-- 编辑态：覆盖整个窗口，体验与速记编辑器一致 -->
+      <div id="edit-view" class="edit-view hidden">
+        <header class="edit-view-header" data-drag-region>
+          <span class="edit-view-title">编辑速记</span>
+          <span id="edit-time" class="edit-view-time"></span>
+          <span id="edit-count" class="edit-view-count"></span>
+        </header>
+        <textarea
+          id="edit-text"
+          class="edit-text"
+          placeholder="记点什么…"
+          autocomplete="off"
+          spellcheck="false"
+        ></textarea>
+        <footer class="edit-view-footer">
+          <span class="hint">Ctrl+Enter 保存 · Esc 取消</span>
+          <button id="edit-cancel" class="settings-btn">取消</button>
+          <button id="edit-save" class="save-btn">保存</button>
+        </footer>
+      </div>
+
       <div id="toast" class="history-toast"></div>
     </main>
   </body>

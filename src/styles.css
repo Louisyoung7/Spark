@@ -154,6 +154,7 @@ body {
 /* ---------- 历史记录窗口 ---------- */
 
 .history-card {
+  position: relative; /* 供编辑视图做绝对定位覆盖 */
   height: 100%;
   display: flex;
   flex-direction: column;
@@ -236,34 +237,67 @@ body {
   opacity: 1;
 }
 
-/* 编辑态：保持操作区与背景常显，提示用户正处于编辑中 */
-.history-item.editing {
-  background: #313244;
-}
+/* ---------- 编辑视图（覆盖整个历史窗口，体验与速记编辑器一致） ---------- */
 
-.history-item.editing .history-item-actions {
-  opacity: 1;
-}
-
-.edit-area {
-  grid-area: content;
-  width: 100%;
-  min-height: 64px;
-  resize: vertical;
-  font-size: 14px;
-  line-height: 1.5;
-  color: #cdd6f4;
+.edit-view {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
   background: #1e1e2e;
-  border: 1px solid #45475a;
-  border-radius: 6px;
-  padding: 8px 10px;
-  outline: none;
-  font-family: inherit;
-  user-select: text;
 }
 
-.edit-area:focus {
-  border-color: #89b4fa;
+.edit-view-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid #313244;
+  flex-shrink: 0;
+}
+
+.edit-view-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #cdd6f4;
+}
+
+.edit-view-time {
+  font-size: 11px;
+  color: #6c7086;
+}
+
+.edit-view-count {
+  margin-left: auto;
+  font-size: 11px;
+  color: #585b70;
+  font-variant-numeric: tabular-nums;
+}
+
+.edit-text {
+  flex: 1;
+  width: 100%;
+  resize: none;
+  overflow-y: auto;
+  font-size: 15px;
+  line-height: 1.7;
+  padding: 14px 16px;
+  color: #cdd6f4;
+  background: transparent;
+  border: none;
+  outline: none;
+  user-select: text;
+  font-family: inherit;
+}
+
+.edit-view-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-top: 1px solid #313244;
+  flex-shrink: 0;
 }
 
 .icon-btn {
