@@ -1,3 +1,5 @@
+import { syncOutline } from "./outline.js";
+
 const { invoke } = window.__TAURI__.core;
 const { getCurrentWindow } = window.__TAURI__.window;
 const { listen } = window.__TAURI__.event;
@@ -14,6 +16,7 @@ function enableWindowDragging(header) {
   });
 }
 const input = document.getElementById("note-input");
+const inputOverlay = document.getElementById("note-overlay");
 const status = document.getElementById("status");
 const saveBtn = document.getElementById("save-btn");
 const wordCount = document.getElementById("word-count");
@@ -36,11 +39,19 @@ function updateCount() {
   const lines = text.split("\n").length;
   wordCount.textContent = `${chars} 字 · ${lines} 行`;
 }
-input.addEventListener("input", updateCount);
+input.addEventListener("input", () => {
+  updateCount();
+  syncOutline(input, inputOverlay);
+});
+input.addEventListener("scroll", () => {
+  inputOverlay.scrollTop = input.scrollTop;
+  inputOverlay.scrollLeft = input.scrollLeft;
+});
 
 window.addEventListener("DOMContentLoaded", () => {
   focusInput();
   updateCount();
+  syncOutline(input, inputOverlay);
 });
 
 // Rust 侧每次显示 / 重新聚焦窗口后都会发该事件，作为 DOM 焦点兜底

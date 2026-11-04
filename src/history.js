@@ -1,3 +1,5 @@
+import { syncOutline } from "./outline.js";
+
 const { invoke } = window.__TAURI__.core;
 const { getCurrentWindow } = window.__TAURI__.window;
 const { listen } = window.__TAURI__.event;
@@ -24,6 +26,7 @@ const editTime = document.getElementById("edit-time");
 const editCount = document.getElementById("edit-count");
 const editSave = document.getElementById("edit-save");
 const editCancel = document.getElementById("edit-cancel");
+const editTextOverlay = document.getElementById("edit-overlay");
 
 let toastTimer = null;
 function showToast(text) {
@@ -183,6 +186,7 @@ function enterEdit(note) {
   editView.classList.remove("hidden");
   editText.focus();
   editText.setSelectionRange(editText.value.length, editText.value.length);
+  syncOutline(editText, editTextOverlay);
 }
 
 function updateEditCount() {
@@ -195,7 +199,14 @@ function updateEditCount() {
   const lines = text.split("\n").length;
   editCount.textContent = `${chars} 字 · ${lines} 行`;
 }
-editText.addEventListener("input", updateEditCount);
+editText.addEventListener("input", () => {
+  updateEditCount();
+  syncOutline(editText, editTextOverlay);
+});
+editText.addEventListener("scroll", () => {
+  editTextOverlay.scrollTop = editText.scrollTop;
+  editTextOverlay.scrollLeft = editText.scrollLeft;
+});
 
 function exitEdit() {
   editingNote = null;

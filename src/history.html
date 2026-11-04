@@ -29,13 +29,16 @@
           <span id="edit-time" class="edit-view-time"></span>
           <span id="edit-count" class="edit-view-count"></span>
         </header>
-        <textarea
-          id="edit-text"
-          class="edit-text"
-          placeholder="记点什么…"
-          autocomplete="off"
-          spellcheck="false"
-        ></textarea>
+        <div class="editor-wrap">
+          <textarea
+            id="edit-text"
+            class="editor-surface"
+            placeholder="记点什么…"
+            autocomplete="off"
+            spellcheck="false"
+          ></textarea>
+          <div id="edit-overlay" class="editor-overlay" aria-hidden="true"></div>
+        </div>
         <footer class="edit-view-footer">
           <span class="hint">Ctrl+Enter 保存 · Esc 取消</span>
           <button id="edit-cancel" class="settings-btn" tabindex="-1">取消</button>

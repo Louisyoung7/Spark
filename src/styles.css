@@ -55,24 +55,65 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-#note-input {
-  flex: 1;
-  width: 100%;
-  resize: none;
-  overflow-y: auto;
-  font-size: 15px;
-  line-height: 1.7;
-  padding: 14px 16px;
-  color: #cdd6f4;
-  background: transparent;
-  border: none;
-  outline: none;
-  user-select: text;
-  font-family: inherit;
+/* 编辑框内联大纲渲染：overlay 装饰层与 textarea 逐字符对齐，把 - / * / + 渲染为圆点 */
+.editor-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
-#note-input::placeholder {
-  color: #585b70;
+.editor-surface,
+.editor-overlay {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  border: 0;
+  padding: 14px 16px;
+  font-family: inherit;
+  font-size: 15px;
+  line-height: 1.7;
+  letter-spacing: normal;
+  white-space: pre-wrap;
+  tab-size: 4;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+}
+
+.editor-surface {
+  resize: none;
+  overflow-y: auto;
+  overflow-x: hidden;
+  color: #cdd6f4;
+  background: transparent;
+  outline: none;
+  user-select: text;
+  z-index: 1;
+}
+
+.editor-surface::placeholder {
+  color: #6c7086;
+}
+
+.editor-overlay {
+  z-index: 2;
+  pointer-events: none;
+  overflow: hidden;
+  color: transparent;
+  user-select: none;
+}
+
+.bullet {
+  position: relative;
+  color: transparent;
+}
+
+.bullet::before {
+  content: "\2022";
+  position: absolute;
+  left: 0;
+  top: 0;
+  color: #89b4fa;
 }
 
 .editor-footer {
@@ -111,13 +152,7 @@ body {
   background: #5d92ee;
 }
 
-#note-input:focus {
-  border-color: #89b4fa;
-}
-
-#note-input::placeholder {
-  color: #6c7086;
-}
+/* 占位符 / 焦点样式已并入 .editor-surface */
 
 .status {
   position: absolute;
@@ -293,21 +328,7 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-.edit-text {
-  flex: 1;
-  width: 100%;
-  resize: none;
-  overflow-y: auto;
-  font-size: 15px;
-  line-height: 1.7;
-  padding: 14px 16px;
-  color: #cdd6f4;
-  background: transparent;
-  border: none;
-  outline: none;
-  user-select: text;
-  font-family: inherit;
-}
+/* 历史编辑框复用 .editor-surface */
 
 .edit-view-footer {
   display: flex;
