@@ -19,6 +19,7 @@ export const sparkTheme = EditorView.theme(
       padding: "14px 16px",
       caretColor: "#cdd6f4",
       tabSize: "4",
+      position: "relative",
     },
     ".cm-line": {
       padding: "0",
@@ -28,12 +29,23 @@ export const sparkTheme = EditorView.theme(
     },
     ".cm-cursor, .cm-dropCursor": {
       borderLeftColor: "#cdd6f4",
+      // CM6 默认光标高度为整行行高，空文档时空行光标会显得异常粗大；
+      // 用 !important 覆盖 JS 写入的 inline 高度，使其接近文字高度。
+      height: "1.2em !important",
     },
     "&.cm-focused .cm-selectionBackground, .cm-selectionBackground": {
       backgroundColor: "#45475a",
     },
     ".cm-placeholder": {
       color: "#6c7086",
+    },
+    ".cm-placeholder-multiline": {
+      position: "absolute",
+      top: "14px",
+      left: "16px",
+      right: "16px",
+      pointerEvents: "none",
+      whiteSpace: "pre",
     },
     // 列表圆点：输入「- / * / + 」后实时绘制为蓝色圆点
     ".cm-bullet": {
