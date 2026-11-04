@@ -205,8 +205,48 @@ function exitEdit() {
 editSave.addEventListener("click", saveEdit);
 editCancel.addEventListener("click", exitEdit);
 
-// 编辑态：Ctrl+Enter 保存，Esc 取消（stopPropagation 阻止窗口级 Esc 关闭窗口）
+// 幕布式缩进（作用于任意 textarea）：对光标行/选中多行行首增/减一个 Tab。
+function indentTextarea(ta, dir) {
+  const val = ta.value;
+  const selStart = ta.selectionStart;
+  const selEnd = ta.selectionEnd;
+  const blockStart = val.lastIndexOf("\n", selStart - 1) + 1;
+  let blockEnd = val.indexOf("\n", selEnd);
+  if (blockEnd === -1) blockEnd = val.length;
+
+  const lines = val.slice(blockStart, blockEnd).split("\n");
+  let changed = 0;
+  const newLines = lines.map((line) => {
+    if (dir > 0) {
+      changed++;
+      return "\t" + line;
+    }
+    if (line.startsWith("\t")) {
+      changed++;
+      return line.slice(1);
+    }
+    if (line.startsWith(" ")) {
+      changed++;
+      return line.slice(1);
+    }
+    return line;
+  });
+  const newBlock = newLines.join("\n");
+
+  ta.setRangeText(newBlock, blockStart, blockEnd);
+  const delta = dir > 0 ? lines.length : changed;
+  ta.setSelectionRange(selStart + delta, selEnd + delta);
+}
+
+// 编辑态：Tab 缩进；Ctrl+Enter 保存；Esc 取消（stopPropagation 阻止窗口级 Esc 关闭窗口）
 editText.addEventListener("keydown", (e) => {
+  if (e.key === "Tab") {
+    e.preventDefault();
+    e.stopPropagation();
+    indentTextarea(editText, e.shiftKey ? -1 : 1);
+    updateEditCount();
+    return;
+  }
   if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
     e.preventDefault();
     e.stopPropagation();
