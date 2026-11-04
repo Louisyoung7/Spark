@@ -18,6 +18,12 @@ const listEl = document.getElementById("note-list");
 const countEl = document.getElementById("count");
 const emptyEl = document.getElementById("empty");
 const toastEl = document.getElementById("toast");
+const editView = document.getElementById("edit-view");
+const editText = document.getElementById("edit-text");
+const editTime = document.getElementById("edit-time");
+const editCount = document.getElementById("edit-count");
+const editSave = document.getElementById("edit-save");
+const editCancel = document.getElementById("edit-cancel");
 
 let toastTimer = null;
 function showToast(text) {
@@ -72,12 +78,14 @@ function render(notes) {
       <div class="history-item-content">${escapeHtml(note.content)}</div>
       <div class="history-item-actions">
         <button class="icon-btn act-copy" title="复制">复制</button>
+        <button class="icon-btn act-edit" title="编辑">编辑</button>
         <button class="icon-btn act-del" title="删除">删除</button>
       </div>`;
     item.querySelector(".act-copy").addEventListener("click", async () => {
       const ok = await copyText(note.content);
       showToast(ok ? "已复制" : "复制失败");
     });
+    item.querySelector(".act-edit").addEventListener("click", () => enterEdit(note));
     item.querySelector(".act-del").addEventListener("click", async () => {
       try {
         await invoke("delete_note", { line: note.line });
@@ -91,7 +99,73 @@ function render(notes) {
   }
 }
 
+// 进入编辑态：弹出覆盖全窗口的大编辑视图（与速记编辑器一致）。
+let editingNote = null;
+
+function enterEdit(note) {
+  editingNote = note;
+  editTime.textContent = formatTime(note.time);
+  editText.value = note.content;
+  updateEditCount();
+  editView.classList.remove("hidden");
+  editText.focus();
+  editText.setSelectionRange(editText.value.length, editText.value.length);
+}
+
+function updateEditCount() {
+  const text = editText.value;
+  if (!text) {
+    editCount.textContent = "";
+    return;
+  }
+  const chars = text.length;
+  const lines = text.split("\n").length;
+  editCount.textContent = `${chars} 字 · ${lines} 行`;
+}
+editText.addEventListener("input", updateEditCount);
+
+function exitEdit() {
+  editingNote = null;
+  editView.classList.add("hidden");
+}
+
+editSave.addEventListener("click", saveEdit);
+editCancel.addEventListener("click", exitEdit);
+
+// 编辑态：Ctrl+Enter 保存，Esc 取消（stopPropagation 阻止窗口级 Esc 关闭窗口）
+editText.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault();
+    e.stopPropagation();
+    saveEdit();
+  } else if (e.key === "Escape") {
+    e.preventDefault();
+    e.stopPropagation();
+    exitEdit();
+  }
+});
+
+async function saveEdit() {
+  if (!editingNote) return;
+  const content = editText.value.trim();
+  if (!content) {
+    showToast("内容不能为空");
+    return;
+  }
+  const note = editingNote;
+  try {
+    await invoke("edit_note", { line: note.line, content });
+    showToast("已保存");
+    exitEdit();
+    await load(); // 重新拉取并刷新，确保与后端一致
+  } catch (err) {
+    showToast(`保存失败：${err}`);
+  }
+}
+
 async function load() {
+  // 编辑态下窗口聚焦等事件可能触发刷新，避免覆盖正在编辑的内容
+  if (editingNote) return;
   try {
     render(await invoke("list_notes"));
   } catch (err) {
