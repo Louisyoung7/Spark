@@ -1,11 +1,22 @@
 import { EditorView, keymap, placeholder as cmPlaceholder } from "@codemirror/view";
 import { EditorState } from "@codemirror/state";
+import { indentUnit } from "@codemirror/language";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { markdown } from "@codemirror/lang-markdown";
 import { outlineList } from "./outlineList.js";
 import { sparkTheme } from "./theme.js";
 
 export { EditorView };
+
+// 把行首空白规范为纯 Tab：markdown 语言默认用空格缩进，可能与本模块的
+// 「每层级一个 \t」混出「\t 」（tab 后跟空格），导致 Shift+Tab 第二次只退一格空格。
+// 含 tab 时以 tab 为准、丢弃 tab 之后的零散空格；纯空格则保持原样（逐格退）。
+function normalizeLeading(ws) {
+  if (!ws.includes("\t")) return ws;
+  let tabs = 0;
+  for (const ch of ws) if (ch === "\t") tabs++;
+  return "\t".repeat(tabs);
+}
 
 // 幕布式缩进：对光标所在（或选中多行）每行行首操作。
 // - Tab（dir>0）：行首加一个 Tab（增加嵌套层级）。
@@ -20,13 +31,17 @@ export function indentSelection(view, dir) {
   const lines = original.split("\n");
   const newLines = lines.map((line) => {
     if (dir > 0) return "\t" + line;
-    // 反向：逐层解除缩进
-    if (line.startsWith("\t")) return line.slice(1);
-    if (line.startsWith(" ")) return line.slice(1);
+    // 反向：先规范行首空白为纯 Tab，再逐层解除缩进（保证每次退回一个完整层级）
+    const m = line.match(/^([ \t]*)/);
+    const ws = m ? m[1] : "";
+    const norm = normalizeLeading(ws);
+    const rest = line.slice(ws.length);
+    if (norm.startsWith("\t")) return norm.slice(1) + rest;
+    if (norm.startsWith(" ")) return norm.slice(1) + rest;
     // 已无缩进：若是列表项则取消 marker（「- 」→ 普通文本）
-    const m = line.match(/^([-+*])(\s|$)/);
-    if (m) return line.slice(m[0].length);
-    return line;
+    const mm = rest.match(/^([-+*])(\s|$)/);
+    if (mm) return rest.slice(mm[0].length);
+    return rest;
   });
   const insert = newLines.join("\n");
   if (insert === original) return; // 无变化，避免无意义 dispatch
@@ -46,7 +61,7 @@ export function enterWithIndent(view) {
   const line = state.doc.lineAt(sel.from);
   const full = line.text;
   const indentMatch = full.match(/^([ \t]*)/);
-  const indent = indentMatch ? indentMatch[1] : "";
+  const indent = normalizeLeading(indentMatch ? indentMatch[1] : "");
   const rest = full.slice(indent.length);
   const listMatch = rest.match(/^([-*+])(\s.*)?$/);
 
@@ -122,6 +137,7 @@ export function createEditor(opts) {
         history(),
         keymap.of([...keyBindings, ...defaultKeymap, ...historyKeymap]),
         markdown(),
+        indentUnit.of("\t"),
         outlineList(),
         sparkTheme,
         EditorView.lineWrapping,
