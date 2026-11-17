@@ -141,6 +141,11 @@ async function copyText(text) {
   }
 }
 
+// 行内操作图标：继承按钮文字色，随悬停态变化
+const ICON_COPY = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5.5" y="5.5" width="9" height="9" rx="1.5"/><path d="M10.5 4.5V3A1.5 1.5 0 0 0 9 1.5H3A1.5 1.5 0 0 0 1.5 3v6A1.5 1.5 0 0 0 3 10.5h1.5"/></svg>`;
+const ICON_EDIT = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11.5 2.5l2 2L5 13H3v-2z"/></svg>`;
+const ICON_DELETE = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 4.5h11"/><path d="M6.5 4.5V3a.5.5 0 0 1 .5-.5h2a.5.5 0 0 1 .5.5v1.5"/><path d="M4 4.5l.6 8a1 1 0 0 0 1 .9h4.8a1 1 0 0 0 1-.9l.6-8"/><path d="M6.5 7v4M9.5 7v4"/></svg>`;
+
 function render(notes) {
   const query = searchEl.value.trim();
   listEl.innerHTML = "";
@@ -159,9 +164,9 @@ function render(notes) {
       <div class="history-item-time">${escapeHtml(formatTime(note.time))}</div>
       <div class="history-item-content">${renderOutline(note.content)}</div>
       <div class="history-item-actions">
-        <button class="icon-btn act-copy" title="复制" tabindex="-1">复制</button>
-        <button class="icon-btn act-edit" title="编辑" tabindex="-1">编辑</button>
-        <button class="icon-btn act-del" title="删除" tabindex="-1">删除</button>
+        <button class="icon-btn act-copy" title="复制" aria-label="复制" tabindex="-1">${ICON_COPY}</button>
+        <button class="icon-btn act-edit" title="编辑" aria-label="编辑" tabindex="-1">${ICON_EDIT}</button>
+        <button class="icon-btn act-del" title="删除" aria-label="删除" tabindex="-1">${ICON_DELETE}</button>
       </div>`;
     item.querySelector(".act-copy").addEventListener("click", async () => {
       const ok = await copyText(note.content);
