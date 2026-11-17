@@ -51,6 +51,36 @@ body {
   user-select: none;
 }
 
+/* ---------- 滚动条（历史列表 / 设置页 / 编辑器共用一套） ---------- */
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--surface-strong);
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: var(--radius-pill);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--surface-hover);
+}
+
+/* 非 WebKit 内核（Firefox）走标准属性 */
+@supports not selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--surface-strong) transparent;
+  }
+}
+
 .card {
   position: relative; /* 供缩放热区与状态提示做绝对定位参照 */
   height: 100%;
@@ -384,6 +414,10 @@ body {
   color: var(--text);
 }
 
+.icon-btn:active {
+  background: var(--surface-hover);
+}
+
 .history-empty {
   flex: 1;
   display: flex;
@@ -393,6 +427,18 @@ body {
   gap: 6px;
   font-size: 14px;
   color: var(--text-secondary);
+  text-align: center;
+}
+
+.history-empty-icon {
+  display: flex;
+  color: var(--text-faint);
+  margin-bottom: 2px;
+}
+
+.history-empty-icon svg {
+  width: 32px;
+  height: 32px;
 }
 
 .history-empty .dim {
@@ -590,6 +636,10 @@ body {
   background: var(--surface-hover);
 }
 
+.settings-btn:active {
+  background: var(--surface);
+}
+
 .settings-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
@@ -602,6 +652,10 @@ body {
 
 .settings-btn-ghost:hover {
   background: var(--surface);
+}
+
+.settings-btn-ghost:active {
+  background: var(--surface-strong);
 }
 
 /* 快捷键输入 */
@@ -756,4 +810,14 @@ body.fullscreen .resize-handle {
 
 [data-drag-region]:hover .drag-grabber {
   background: var(--accent);
+}
+
+/* ---------- 减少动态效果 ---------- */
+
+/* 系统开启「减少动态效果」后，过渡时长归零，状态切换直接完成 */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-fast: 0s;
+    --duration: 0s;
+  }
 }

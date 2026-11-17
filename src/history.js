@@ -19,6 +19,7 @@ enableWindowDragging(document.querySelector("[data-drag-region]"));
 const listEl = document.getElementById("note-list");
 const countEl = document.getElementById("count");
 const emptyEl = document.getElementById("empty");
+const emptyTextEl = document.getElementById("empty-text");
 const searchEl = document.getElementById("search-input");
 const toastEl = document.getElementById("toast");
 const editView = document.getElementById("edit-view");
@@ -152,9 +153,9 @@ function render(notes) {
   countEl.textContent = notes.length ? `${notes.length} 条` : "";
   emptyEl.classList.toggle("hidden", notes.length > 0);
   if (!notes.length) {
-    emptyEl.innerHTML = query
+    emptyTextEl.innerHTML = query
       ? `没有匹配的记录<br /><span class="dim">换个关键词试试</span>`
-      : `还没有记录<br /><span class="dim">按 Alt+Q 写下第一条速记</span>`;
+      : `还没有速记<br /><span class="dim">按 Alt+Q 写下第一条</span>`;
   }
 
   for (const note of notes) {
