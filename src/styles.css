@@ -269,6 +269,23 @@ body {
   opacity: 1;
 }
 
+.history-item-actions .icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px;
+  line-height: 0;
+}
+
+.history-item-actions .icon-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.history-item-actions .act-del:hover {
+  color: #f38ba8;
+}
+
 /* ---------- 编辑视图（覆盖整个历史窗口，体验与速记编辑器一致） ---------- */
 
 .edit-view {
