@@ -49,6 +49,8 @@ async function refreshHotkeyHint() {
 
 // 草稿持久化：窗口隐藏不丢，托盘退出后重开也能接着写
 const DRAFT_KEY = "spark:draft";
+// 最近一次保存时间，供历史窗口定位并高亮刚写入的一条
+const LAST_SAVED_KEY = "spark:last-saved-at";
 let draftTimer = null;
 
 function writeDraft(text) {
@@ -207,6 +209,11 @@ function saveNote() {
   invoke("save_note", { content })
     .then(() => {
       clearDraft();
+      try {
+        localStorage.setItem(LAST_SAVED_KEY, String(Date.now()));
+      } catch {
+        // localStorage 不可用时忽略，仅失去高亮定位
+      }
       editorView.dispatch({
         changes: { from: 0, to: editorView.state.doc.length, insert: "" },
       });

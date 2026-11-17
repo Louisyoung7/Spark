@@ -147,6 +147,35 @@ const ICON_COPY = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" st
 const ICON_EDIT = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11.5 2.5l2 2L5 13H3v-2z"/></svg>`;
 const ICON_DELETE = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 4.5h11"/><path d="M6.5 4.5V3a.5.5 0 0 1 .5-.5h2a.5.5 0 0 1 .5.5v1.5"/><path d="M4 4.5l.6 8a1 1 0 0 0 1 .9h4.8a1 1 0 0 0 1-.9l.6-8"/><path d="M6.5 7v4M9.5 7v4"/></svg>`;
 
+const LAST_SAVED_KEY = "spark:last-saved-at";
+const HIGHLIGHT_MS = 1600;
+let highlightTimer = null;
+
+// 取一次保存时间戳即清除，保证「刚保存」只高亮首次打开
+function takeLastSavedAt() {
+  try {
+    const raw = localStorage.getItem(LAST_SAVED_KEY);
+    if (!raw) return null;
+    localStorage.removeItem(LAST_SAVED_KEY);
+    return Number(raw);
+  } catch {
+    return null;
+  }
+}
+
+// 与最新一条记录的时间比对（列表已按最新在前），命中则短暂高亮
+function highlightLatest(savedAt) {
+  if (!savedAt || !allNotes.length) return;
+  const latest = allNotes[0];
+  const t = new Date(latest.time).getTime();
+  if (Number.isNaN(t) || Math.abs(t - savedAt) > 5000) return;
+  const item = listEl.querySelector(`[data-line="${latest.line}"]`);
+  if (!item) return;
+  item.classList.add("is-new");
+  clearTimeout(highlightTimer);
+  highlightTimer = setTimeout(() => item.classList.remove("is-new"), HIGHLIGHT_MS);
+}
+
 function render(notes) {
   const query = searchEl.value.trim();
   listEl.innerHTML = "";
@@ -161,6 +190,7 @@ function render(notes) {
   for (const note of notes) {
     const item = document.createElement("div");
     item.className = "history-item";
+    item.dataset.line = note.line;
     item.innerHTML = `
       <div class="history-item-time">${escapeHtml(formatTime(note.time))}</div>
       <div class="history-item-content">${renderOutline(note.content)}</div>
@@ -260,6 +290,7 @@ async function load() {
   try {
     allNotes = await invoke("list_notes");
     render(filterNotes());
+    highlightLatest(takeLastSavedAt());
   } catch (err) {
     showToast(`加载失败：${err}`);
   }
