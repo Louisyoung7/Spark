@@ -47,6 +47,50 @@ async function refreshHotkeyHint() {
   }
 }
 
+// 草稿持久化：窗口隐藏不丢，托盘退出后重开也能接着写
+const DRAFT_KEY = "spark:draft";
+let draftTimer = null;
+
+function writeDraft(text) {
+  try {
+    // 仅空白内容视为无草稿，避免下次打开只剩空格
+    if (text.trim()) localStorage.setItem(DRAFT_KEY, text);
+    else localStorage.removeItem(DRAFT_KEY);
+  } catch {
+    // localStorage 不可用时忽略，草稿只保留在内存
+  }
+}
+
+function scheduleSaveDraft(text) {
+  clearTimeout(draftTimer);
+  draftTimer = setTimeout(() => writeDraft(text), 200);
+}
+
+function flushDraft() {
+  if (!editorView) return;
+  clearTimeout(draftTimer);
+  draftTimer = null;
+  writeDraft(editorView.state.doc.toString());
+}
+
+function loadDraft() {
+  try {
+    return localStorage.getItem(DRAFT_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
+function clearDraft() {
+  clearTimeout(draftTimer);
+  draftTimer = null;
+  try {
+    localStorage.removeItem(DRAFT_KEY);
+  } catch {
+    // 忽略
+  }
+}
+
 function updateCount() {
   const text = editorView ? editorView.state.doc.toString() : "";
   if (!text) {
@@ -64,6 +108,7 @@ function handleEscape() {
     setFullscreen(false);
     return;
   }
+  flushDraft();
   appWindow.hide();
 }
 
@@ -72,7 +117,10 @@ function handleEscape() {
 editorView = createEditor({
   parent: host,
   placeholder: "记点什么…\n\nEnter 换行，Ctrl+Enter 保存",
-  onDocChange: () => updateCount(),
+  onDocChange: (text) => {
+    updateCount();
+    scheduleSaveDraft(text);
+  },
   commands: {
     Tab: (v) => {
       indentSelection(v, 1);
@@ -105,6 +153,12 @@ editorView = createEditor({
   },
 });
 
+// 恢复上次未保存的草稿（托盘退出后重开也能接着写）
+const draft = loadDraft();
+if (draft.trim()) {
+  editorView.dispatch({ changes: { from: 0, to: 0, insert: draft } });
+}
+
 window.addEventListener("DOMContentLoaded", () => {
   focusInput();
   updateCount();
@@ -118,10 +172,15 @@ listen("focus-input", () => {
   refreshHotkeyHint();
 });
 
-// 页面重新可见时（Wayland 切换前台等场景）补一次聚焦
+// 页面重新可见时（Wayland 切换前台等场景）补一次聚焦；
+// 转为不可见时立即落盘草稿，避免退出应用丢掉最后一段输入
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") focusInput();
+  else flushDraft();
 });
+
+// 退出前兜底保存草稿
+window.addEventListener("beforeunload", flushDraft);
 
 let statusTimer = null;
 function flashStatus(text, isError = false) {
@@ -135,12 +194,14 @@ function flashStatus(text, isError = false) {
 function saveNote() {
   const content = editorView.state.doc.toString().trim();
   if (!content) {
-    // 空内容：直接隐藏，不写入
+    // 空内容：清除草稿并隐藏，不写入
+    clearDraft();
     appWindow.hide();
     return;
   }
   invoke("save_note", { content })
     .then(() => {
+      clearDraft();
       editorView.dispatch({
         changes: { from: 0, to: editorView.state.doc.length, insert: "" },
       });
