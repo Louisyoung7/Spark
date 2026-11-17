@@ -167,6 +167,8 @@ window.addEventListener("DOMContentLoaded", () => {
 
 // Rust 侧每次显示 / 重新聚焦窗口后都会发该事件，作为 DOM 焦点兜底
 listen("focus-input", () => {
+  // 窗口重新显示时取消尚未执行的收起，避免上一次保存的延迟定时器误关窗
+  clearTimeout(hideTimer);
   focusInput();
   // 设置窗口可能刚改过快捷键，重新显示时同步提示
   refreshHotkeyHint();
@@ -191,10 +193,13 @@ function flashStatus(text, isError = false) {
   statusTimer = setTimeout(() => status.classList.remove("show"), 1500);
 }
 
+// 保存成功后的延迟收起定时器（先给反馈再关窗）
+let hideTimer = null;
+
 function saveNote() {
   const content = editorView.state.doc.toString().trim();
   if (!content) {
-    // 空内容：清除草稿并隐藏，不写入
+    // 空内容：清除草稿并隐藏，不写入，也不提示成功
     clearDraft();
     appWindow.hide();
     return;
@@ -206,7 +211,10 @@ function saveNote() {
         changes: { from: 0, to: editorView.state.doc.length, insert: "" },
       });
       updateCount();
-      appWindow.hide();
+      // 短暂显示「已保存」再收起，避免只靠窗口消失暗示成功
+      flashStatus("已保存");
+      clearTimeout(hideTimer);
+      hideTimer = setTimeout(() => appWindow.hide(), 200);
     })
     .catch((err) => {
       flashStatus(`保存失败：${err}`, true);
