@@ -173,6 +173,33 @@ body {
   flex: 1;
 }
 
+.history-search {
+  padding: 8px 16px 10px;
+  border-bottom: 1px solid #313244;
+  flex-shrink: 0;
+}
+
+.history-search-input {
+  width: 100%;
+  font-size: 13px;
+  color: #cdd6f4;
+  background: #313244;
+  border: 1px solid #45475a;
+  border-radius: 6px;
+  padding: 6px 10px;
+  outline: none;
+  font-family: inherit;
+  user-select: text;
+}
+
+.history-search-input:focus {
+  border-color: #89b4fa;
+}
+
+.history-search-input::placeholder {
+  color: #6c7086;
+}
+
 .history-list {
   flex: 1;
   overflow-y: auto;
