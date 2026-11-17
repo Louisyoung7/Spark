@@ -17,6 +17,16 @@
         <button id="settings-btn" class="icon-btn" title="设置" tabindex="-1">⚙</button>
         <button id="close-btn" class="icon-btn" title="关闭 (Esc)" tabindex="-1">✕</button>
       </header>
+      <div class="history-search">
+        <input
+          id="search-input"
+          class="history-search-input"
+          type="text"
+          placeholder="搜索记录…"
+          autocomplete="off"
+          spellcheck="false"
+        />
+      </div>
       <div id="note-list" class="history-list"></div>
       <div id="empty" class="history-empty hidden">
         还没有记录<br /><span class="dim">按 Alt+Q 写下第一条速记</span>

@@ -19,6 +19,7 @@ enableWindowDragging(document.querySelector("[data-drag-region]"));
 const listEl = document.getElementById("note-list");
 const countEl = document.getElementById("count");
 const emptyEl = document.getElementById("empty");
+const searchEl = document.getElementById("search-input");
 const toastEl = document.getElementById("toast");
 const editView = document.getElementById("edit-view");
 const editText = document.getElementById("edit-text");
@@ -141,9 +142,15 @@ async function copyText(text) {
 }
 
 function render(notes) {
+  const query = searchEl.value.trim();
   listEl.innerHTML = "";
   countEl.textContent = notes.length ? `${notes.length} 条` : "";
   emptyEl.classList.toggle("hidden", notes.length > 0);
+  if (!notes.length) {
+    emptyEl.innerHTML = query
+      ? `没有匹配的记录<br /><span class="dim">换个关键词试试</span>`
+      : `还没有记录<br /><span class="dim">按 Alt+Q 写下第一条速记</span>`;
+  }
 
   for (const note of notes) {
     const item = document.createElement("div");
@@ -230,11 +237,23 @@ async function saveEdit() {
   }
 }
 
+// 全量记录缓存，搜索只在前端过滤，不重复请求后端
+let allNotes = [];
+
+function filterNotes() {
+  const query = searchEl.value.trim().toLowerCase();
+  if (!query) return allNotes;
+  return allNotes.filter((note) => note.content.toLowerCase().includes(query));
+}
+
+searchEl.addEventListener("input", () => render(filterNotes()));
+
 async function load() {
   // 编辑态下窗口聚焦等事件可能触发刷新，避免覆盖正在编辑的内容
   if (editingNote) return;
   try {
-    render(await invoke("list_notes"));
+    allNotes = await invoke("list_notes");
+    render(filterNotes());
   } catch (err) {
     showToast(`加载失败：${err}`);
   }
