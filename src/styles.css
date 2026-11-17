@@ -23,6 +23,7 @@
   --accent-active: #5d92ee;
   --danger: #f38ba8;
   --warning: #f9e2af;
+  --accent-soft: rgba(137, 180, 250, 0.16);
   --text-on-accent: #1e1e2e;
 
   /* 圆角 */
@@ -278,10 +279,16 @@ body {
   column-gap: 8px;
   padding: 10px 10px;
   border-radius: var(--radius-md);
+  transition: background var(--duration) ease;
 }
 
 .history-item:hover {
   background: var(--surface);
+}
+
+/* 刚保存的一条：短暂高亮后淡出 */
+.history-item.is-new {
+  background: var(--accent-soft);
 }
 
 .history-item-time {
