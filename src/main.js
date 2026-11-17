@@ -21,6 +21,7 @@ const status = document.getElementById("status");
 const saveBtn = document.getElementById("save-btn");
 const wordCount = document.getElementById("word-count");
 const fullscreenBtn = document.getElementById("fullscreen-btn");
+const hotkeyHint = document.getElementById("hotkey-hint");
 
 let editorView;
 let fullscreen = false;
@@ -31,6 +32,19 @@ function focusInput() {
   editorView.focus();
   const len = editorView.state.doc.length;
   editorView.dispatch({ selection: { anchor: len } });
+}
+
+// 底部快捷键提示跟随设置变化，避免自定义后仍显示默认值
+const DEFAULT_HINT = hotkeyHint ? hotkeyHint.textContent : "";
+
+async function refreshHotkeyHint() {
+  if (!hotkeyHint) return;
+  try {
+    const s = await invoke("get_settings");
+    hotkeyHint.textContent = `${s.hotkey_main} 速记 · ${s.hotkey_history} 历史 · Esc 收起`;
+  } catch {
+    hotkeyHint.textContent = DEFAULT_HINT;
+  }
 }
 
 function updateCount() {
@@ -94,10 +108,15 @@ editorView = createEditor({
 window.addEventListener("DOMContentLoaded", () => {
   focusInput();
   updateCount();
+  refreshHotkeyHint();
 });
 
 // Rust 侧每次显示 / 重新聚焦窗口后都会发该事件，作为 DOM 焦点兜底
-listen("focus-input", focusInput);
+listen("focus-input", () => {
+  focusInput();
+  // 设置窗口可能刚改过快捷键，重新显示时同步提示
+  refreshHotkeyHint();
+});
 
 // 页面重新可见时（Wayland 切换前台等场景）补一次聚焦
 document.addEventListener("visibilitychange", () => {
