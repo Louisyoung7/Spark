@@ -29,7 +29,23 @@
       </div>
       <div id="note-list" class="history-list"></div>
       <div id="empty" class="history-empty hidden">
-        还没有记录<br /><span class="dim">按 Alt+Q 写下第一条速记</span>
+        <span class="history-empty-icon" aria-hidden="true">
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.3"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M5 3.5h9.5L19 8v12.5H5z" />
+            <path d="M14.5 3.5V8H19" />
+            <path d="M8.5 12h7M8.5 15.5h4.5" />
+          </svg>
+        </span>
+        <div id="empty-text">
+          还没有速记<br /><span class="dim">按 Alt+Q 写下第一条</span>
+        </div>
       </div>
 
       <!-- 编辑态：覆盖整个窗口，体验与速记编辑器一致 -->
