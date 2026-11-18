@@ -69,8 +69,30 @@ jobs:
           cp src-tauri/target/release/bundle/rpm/*.rpm artifacts/ || true
           ls -lh artifacts
 
-      - name: 发布到 GitHub Release
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: spark-linux-x64
+          path: artifacts/*
+          if-no-files-found: error
+
+  draft-release:
+    name: 创建草稿 Release
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      # 后续新增平台时，只需增加 build job 并上传 artifact，
+      # 这里会合并所有平台的产物一起附到 Release。
+      - name: 下载构建产物
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: 创建 / 更新草稿 Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.ref_name }}
+          draft: true
           files: artifacts/*
-          generate_release_notes: true
+          fail_on_unmatched_files: true
