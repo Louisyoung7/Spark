@@ -79,6 +79,11 @@ function buildTheme(isDark) {
         color: "var(--text-muted)",
         fontVariantNumeric: "tabular-nums",
       },
+      // 悬挂缩进：换行后的文字与列表内容对齐，标记悬挂在左侧
+      ".cm-list-line": {
+        paddingLeft: "var(--spark-hang, 0)",
+        textIndent: "calc(-1 * var(--spark-hang, 0))",
+      },
     },
     { dark: isDark }
   );

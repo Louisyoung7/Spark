@@ -65,8 +65,8 @@ export function indentSelection(view, dir) {
 }
 
 // 回车继承缩进（幕布式手感）：
-// - 有内容的列表项 → 续行并自动补「marker 」；
-// - 空列表项（仅「- 」无内容）→ 退出列表层级（删除 marker）；
+// - 有内容的列表项 → 续行并自动补「marker 」（有序列表自动续号）；
+// - 空列表项（仅「- 」或「1. 」无内容）→ 退出列表层级（删除 marker）；
 // - 普通行 → 仅继承行首缩进；空行 → 退一级。
 export function enterWithIndent(view) {
   const { state } = view;
@@ -76,10 +76,11 @@ export function enterWithIndent(view) {
   const indentMatch = full.match(/^([ \t]*)/);
   const indent = normalizeLeading(indentMatch ? indentMatch[1] : "");
   const rest = full.slice(indent.length);
-  const listMatch = rest.match(/^([-*+])(\s.*)?$/);
+  const bullet = rest.match(/^([-*+])(\s(.*))?$/);
+  const ordered = rest.match(/^(\d{1,9})([.)])(\s+)(.*)$/);
 
-  if (listMatch) {
-    const marker = listMatch[1];
+  if (bullet) {
+    const marker = bullet[1];
     if (rest.trim() === marker) {
       // 空列表项：删除 marker 及其后空白，退出当前列表层级
       const from = line.from + indent.length;
@@ -93,6 +94,29 @@ export function enterWithIndent(view) {
     view.dispatch({
       changes: { from: sel.from, to: sel.to, insert: "\n" + indent + marker + " " },
       selection: { anchor: sel.from + 1 + indent.length + 2 },
+    });
+    view.focus();
+    return;
+  }
+
+  if (ordered) {
+    const number = Number(ordered[1]);
+    const delim = ordered[2];
+    const content = ordered[4] || "";
+    if (content.trim() === "") {
+      // 空的有序列表项：同样退出列表层级
+      const from = line.from + indent.length;
+      view.dispatch({
+        changes: { from, to: line.to, insert: "" },
+        selection: { anchor: from },
+      });
+      view.focus();
+      return;
+    }
+    const next = `${number + 1}${delim} `;
+    view.dispatch({
+      changes: { from: sel.from, to: sel.to, insert: "\n" + indent + next },
+      selection: { anchor: sel.from + 1 + indent.length + next.length },
     });
     view.focus();
     return;
