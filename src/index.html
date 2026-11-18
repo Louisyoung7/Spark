@@ -18,6 +18,14 @@
       </header>
       <div class="editor-wrap">
         <div id="note-input" class="cm-host"></div>
+        <!-- 空文档浮层：由 main.js 按内容切换，不拦截编辑器点击 -->
+        <div id="editor-empty" class="editor-empty" aria-hidden="true">
+          <div class="editor-empty-title">记点什么…</div>
+          <div class="editor-empty-sub">
+            <kbd id="empty-hotkey" class="kbd">Alt+Q</kbd>
+            <span>随时唤起速记</span>
+          </div>
+        </div>
       </div>
       <footer class="editor-footer">
         <span id="hotkey-hint" class="hint">Alt+Q 速记 · Ctrl+Alt+Q 历史 · Esc 收起</span>

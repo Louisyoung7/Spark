@@ -106,7 +106,7 @@ function render(notes) {
   if (!notes.length) {
     emptyTextEl.innerHTML = query
       ? `没有匹配的记录<br /><span class="dim">换个关键词试试</span>`
-      : `还没有速记<br /><span class="dim">按 Alt+Q 写下第一条</span>`;
+      : `还没有速记<br /><span class="dim">按 <kbd class="kbd">Alt+Q</kbd> 写下第一条</span>`;
   }
 
   for (const note of notes) {
@@ -114,13 +114,15 @@ function render(notes) {
     item.className = "history-item";
     item.dataset.line = note.line;
     item.innerHTML = `
-      <div class="history-item-time">${escapeHtml(formatTime(note.time))}</div>
-      <div class="history-item-content">${renderOutline(note.content)}</div>
-      <div class="history-item-actions">
-        <button class="icon-btn act-copy" title="复制" aria-label="复制" tabindex="-1">${ICON_COPY}</button>
-        <button class="icon-btn act-edit" title="编辑" aria-label="编辑" tabindex="-1">${ICON_EDIT}</button>
-        <button class="icon-btn act-del" title="删除" aria-label="删除" tabindex="-1">${ICON_DELETE}</button>
-      </div>`;
+      <div class="history-item-head">
+        <span class="history-item-time">${escapeHtml(formatTime(note.time))}</span>
+        <div class="history-item-actions">
+          <button class="icon-btn act-copy" title="复制" aria-label="复制" tabindex="-1">${ICON_COPY}</button>
+          <button class="icon-btn act-edit" title="编辑" aria-label="编辑" tabindex="-1">${ICON_EDIT}</button>
+          <button class="icon-btn act-del" title="删除" aria-label="删除" tabindex="-1">${ICON_DELETE}</button>
+        </div>
+      </div>
+      <div class="history-item-content">${renderOutline(note.content)}</div>`;
     item.querySelector(".act-copy").addEventListener("click", async () => {
       const ok = await copyText(note.content);
       showToast(ok ? "已复制" : "复制失败");

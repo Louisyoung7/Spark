@@ -4,6 +4,7 @@ import { RangeSetBuilder } from "@codemirror/state";
 import {
   BULLET_RE,
   FENCE_RE,
+  HEADING_RE,
   HR_RE,
   ORDERED_RE,
   QUOTE_RE,
@@ -42,7 +43,10 @@ class BulletWidget extends WidgetType {
 
 // 行装饰实例可跨行复用；CodeMirror 允许同一装饰对象出现在多个区间
 const quoteLine = Decoration.line({ class: "cm-quote-line" });
+const headingLine = Decoration.line({ class: "cm-heading-line" });
 const codeLine = Decoration.line({ class: "cm-code-line" });
+const codeFirst = Decoration.line({ class: "cm-code-line cm-code-first" });
+const codeLast = Decoration.line({ class: "cm-code-line cm-code-last" });
 const hrLine = Decoration.line({ class: "cm-hr-line" });
 const orderedMarker = Decoration.mark({ class: "cm-list-marker" });
 
@@ -58,25 +62,32 @@ function computeDecorations(view) {
     const fenceMatch = text.match(FENCE_RE);
 
     if (fence) {
-      builder.add(line.from, line.from, codeLine);
       const isClosing =
         fenceMatch &&
         fenceMatch[2][0] === fence.ch &&
         fenceMatch[2].length >= fence.len &&
         fenceMatch[3].trim() === "";
+      // 收尾的围栏行加末行圆角
+      builder.add(line.from, line.from, isClosing ? codeLast : codeLine);
       if (isClosing) fence = null;
       continue;
     }
 
     if (fenceMatch) {
       fence = { ch: fenceMatch[2][0], len: fenceMatch[2].length };
-      builder.add(line.from, line.from, codeLine);
+      // 开栏行加首行圆角
+      builder.add(line.from, line.from, codeFirst);
       continue;
     }
 
     // 分割线必须先于无序列表判断，否则 --- 会被当成列表项
     if (HR_RE.test(text)) {
       builder.add(line.from, line.from, hrLine);
+      continue;
+    }
+
+    if (HEADING_RE.test(text)) {
+      builder.add(line.from, line.from, headingLine);
       continue;
     }
 

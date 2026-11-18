@@ -22,6 +22,8 @@ const saveBtn = document.getElementById("save-btn");
 const wordCount = document.getElementById("word-count");
 const fullscreenBtn = document.getElementById("fullscreen-btn");
 const hotkeyHint = document.getElementById("hotkey-hint");
+const emptyState = document.getElementById("editor-empty");
+const emptyHotkey = document.getElementById("empty-hotkey");
 
 let editorView;
 let fullscreen = false;
@@ -42,6 +44,7 @@ async function refreshHotkeyHint() {
   try {
     const s = await invoke("get_settings");
     hotkeyHint.textContent = `${s.hotkey_main} 速记 · ${s.hotkey_history} 历史 · Esc 收起`;
+    if (emptyHotkey) emptyHotkey.textContent = s.hotkey_main;
   } catch {
     hotkeyHint.textContent = DEFAULT_HINT;
   }
@@ -104,6 +107,13 @@ function updateCount() {
   wordCount.textContent = `${chars} 字 · ${lines} 行`;
 }
 
+// DOM 空状态浮层：文档为空时显示，开始输入即隐藏
+function updateEmptyState() {
+  if (!emptyState) return;
+  const empty = !editorView || editorView.state.doc.length === 0;
+  emptyState.classList.toggle("hidden", !empty);
+}
+
 // Esc：全屏时先退出全屏，再次按 Esc 才收起窗口
 function handleEscape() {
   if (fullscreen) {
@@ -116,11 +126,12 @@ function handleEscape() {
 
 // 用 CodeMirror 取代原生 textarea：列表标记实时渲染为圆点，仍保留纯文本存储。
 // 快捷键（Tab 缩进 / Enter 续行 / Ctrl+Enter 保存 / Esc 取消 / F11 全屏）走自定义 keymap。
+// 空状态文案由 index.html 的 DOM 浮层承担，不再使用 CodeMirror 占位符
 editorView = createEditor({
   parent: host,
-  placeholder: "记点什么…\n\nEnter 换行，Ctrl+Enter 保存",
   onDocChange: (text) => {
     updateCount();
+    updateEmptyState();
     scheduleSaveDraft(text);
   },
   commands: {
@@ -164,6 +175,7 @@ if (draft.trim()) {
 window.addEventListener("DOMContentLoaded", () => {
   focusInput();
   updateCount();
+  updateEmptyState();
   refreshHotkeyHint();
 });
 
@@ -218,6 +230,7 @@ function saveNote() {
         changes: { from: 0, to: editorView.state.doc.length, insert: "" },
       });
       updateCount();
+      updateEmptyState();
       // 短暂显示「已保存」再收起，避免只靠窗口消失暗示成功
       flashStatus("已保存");
       clearTimeout(hideTimer);
