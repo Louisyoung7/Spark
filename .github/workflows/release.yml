@@ -63,14 +63,14 @@ jobs:
 
       - name: 收集产物
         run: |
-          mkdir -p dist
-          cp src-tauri/target/release/bundle/appimage/*.AppImage dist/ || true
-          cp src-tauri/target/release/bundle/deb/*.deb dist/ || true
-          cp src-tauri/target/release/bundle/rpm/*.rpm dist/ || true
-          ls -lh dist
+          mkdir -p artifacts
+          cp src-tauri/target/release/bundle/appimage/*.AppImage artifacts/ || true
+          cp src-tauri/target/release/bundle/deb/*.deb artifacts/ || true
+          cp src-tauri/target/release/bundle/rpm/*.rpm artifacts/ || true
+          ls -lh artifacts
 
       - name: 发布到 GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*
+          files: artifacts/*
           generate_release_notes: true
