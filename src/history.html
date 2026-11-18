@@ -14,6 +14,7 @@
         <span class="history-title">历史记录</span>
         <span class="drag-grabber" aria-hidden="true"></span>
         <span id="count" class="history-count"></span>
+        <button id="select-btn" class="icon-btn select-toggle" title="多选" tabindex="-1">选择</button>
         <button id="settings-btn" class="icon-btn" title="设置" tabindex="-1">⚙</button>
         <button id="close-btn" class="icon-btn" title="关闭 (Esc)" tabindex="-1">✕</button>
       </header>
@@ -26,6 +27,12 @@
           autocomplete="off"
           spellcheck="false"
         />
+      </div>
+      <div class="history-filters" role="group" aria-label="按时间筛选">
+        <button class="filter-chip is-active" data-range="all" tabindex="-1">全部</button>
+        <button class="filter-chip" data-range="today" tabindex="-1">今天</button>
+        <button class="filter-chip" data-range="7d" tabindex="-1">近7天</button>
+        <button class="filter-chip" data-range="30d" tabindex="-1">近30天</button>
       </div>
       <div id="note-list" class="history-list"></div>
       <div id="empty" class="history-empty hidden">
@@ -63,6 +70,15 @@
           <button id="edit-cancel" class="settings-btn" tabindex="-1">取消</button>
           <button id="edit-save" class="save-btn" tabindex="-1">保存</button>
         </footer>
+      </div>
+
+      <!-- 多选模式底部操作条 -->
+      <div id="select-bar" class="history-select-bar hidden">
+        <span id="select-count" class="history-select-count">已选 0 条</span>
+        <button id="select-copy" class="bar-btn" tabindex="-1">复制原始文本</button>
+        <button id="select-export" class="bar-btn" tabindex="-1">导出图片</button>
+        <button id="select-delete" class="bar-btn bar-btn-danger" tabindex="-1">删除</button>
+        <button id="select-cancel" class="bar-btn" tabindex="-1">取消</button>
       </div>
 
       <div id="toast" class="history-toast"></div>

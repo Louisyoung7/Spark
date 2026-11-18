@@ -7,6 +7,7 @@ import {
 } from "./editor/index.js";
 import { escapeHtml, renderOutline } from "./markdown/renderHtml.js";
 import { initTheme } from "./theme.js";
+import { toPng } from "html-to-image";
 
 const { invoke } = window.__TAURI__.core;
 const { getCurrentWindow } = window.__TAURI__.window;
@@ -36,6 +37,18 @@ const editTime = document.getElementById("edit-time");
 const editCount = document.getElementById("edit-count");
 const editSave = document.getElementById("edit-save");
 const editCancel = document.getElementById("edit-cancel");
+const cardEl = document.querySelector(".history-card");
+const selectBtn = document.getElementById("select-btn");
+const filterChips = Array.from(document.querySelectorAll(".filter-chip"));
+const selectBar = document.getElementById("select-bar");
+const selectCount = document.getElementById("select-count");
+const selectCopy = document.getElementById("select-copy");
+const selectExport = document.getElementById("select-export");
+const selectDelete = document.getElementById("select-delete");
+const selectCancel = document.getElementById("select-cancel");
+
+const pad2 = (n) => String(n).padStart(2, "0");
+const RANGE_LABELS = { all: "全部", today: "今天", "7d": "近7天", "30d": "近30天" };
 
 let toastTimer = null;
 function showToast(text) {
@@ -51,6 +64,23 @@ function formatTime(iso) {
   if (Number.isNaN(d.getTime())) return "";
   const pad = (n) => String(n).padStart(2, "0");
   return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// 导出图片用完整日期，脱离列表上下文也能看清年月日
+function formatFullTime(value) {
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "";
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
+// 时间筛选起点：以本地自然日 00:00 为界
+function rangeStart(range) {
+  if (range === "all") return -Infinity;
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if (range === "7d") start.setDate(start.getDate() - 6);
+  if (range === "30d") start.setDate(start.getDate() - 29);
+  return start.getTime();
 }
 
 async function copyText(text) {
@@ -75,6 +105,7 @@ async function copyText(text) {
 const ICON_COPY = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5.5" y="5.5" width="9" height="9" rx="1.5"/><path d="M10.5 4.5V3A1.5 1.5 0 0 0 9 1.5H3A1.5 1.5 0 0 0 1.5 3v6A1.5 1.5 0 0 0 3 10.5h1.5"/></svg>`;
 const ICON_EDIT = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11.5 2.5l2 2L5 13H3v-2z"/></svg>`;
 const ICON_DELETE = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 4.5h11"/><path d="M6.5 4.5V3a.5.5 0 0 1 .5-.5h2a.5.5 0 0 1 .5.5v1.5"/><path d="M4 4.5l.6 8a1 1 0 0 0 1 .9h4.8a1 1 0 0 0 1-.9l.6-8"/><path d="M6.5 7v4M9.5 7v4"/></svg>`;
+const ICON_CHECK = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.5L6.5 11.5L12.5 4.5"/></svg>`;
 
 const LAST_SAVED_KEY = "spark:last-saved-at";
 const HIGHLIGHT_MS = 1600;
@@ -113,15 +144,24 @@ function render(notes) {
   if (!notes.length) {
     emptyTextEl.innerHTML = query
       ? `没有匹配的记录<br /><span class="dim">换个关键词试试</span>`
-      : `还没有速记<br /><span class="dim">按 <kbd class="kbd">Alt+Q</kbd> 写下第一条</span>`;
+      : activeRange !== "all"
+        ? `该时间段没有记录<br /><span class="dim">换个时间范围试试</span>`
+        : `还没有速记<br /><span class="dim">按 <kbd class="kbd">Alt+Q</kbd> 写下第一条</span>`;
   }
 
   for (const note of notes) {
     const item = document.createElement("div");
+    const key = noteKey(note);
     item.className = "history-item";
     item.dataset.line = note.line;
+    if (selected.has(key)) item.classList.add("is-selected");
     item.innerHTML = `
       <div class="history-item-head">
+        ${
+          selectMode
+            ? `<span class="select-box${selected.has(key) ? " is-checked" : ""}" aria-hidden="true">${ICON_CHECK}</span>`
+            : ""
+        }
         <span class="history-item-time">${escapeHtml(formatTime(note.time))}</span>
         <div class="history-item-actions">
           <button class="icon-btn act-copy" title="复制" aria-label="复制" tabindex="-1">${ICON_COPY}</button>
@@ -130,6 +170,12 @@ function render(notes) {
         </div>
       </div>
       <div class="history-item-content">${renderOutline(note.content)}</div>`;
+    // 多选模式下整张卡片即勾选区域，单条操作图标由 CSS 隐藏
+    item.addEventListener("click", (event) => {
+      if (!selectMode) return;
+      event.preventDefault();
+      toggleSelected(note, item);
+    });
     item.querySelector(".act-copy").addEventListener("click", async () => {
       const ok = await copyText(note.content);
       showToast(ok ? "已复制" : "复制失败");
@@ -206,22 +252,222 @@ async function saveEdit() {
   }
 }
 
-// 全量记录缓存，搜索只在前端过滤，不重复请求后端
+// 全量记录缓存，搜索与时间筛选只在前端过滤，不重复请求后端
 let allNotes = [];
+
+// 选择状态用「行号 + 时间」标识，重新加载后行号变动也能对齐
+const selected = new Set();
+let selectMode = false;
+let deleteArmed = false;
+let deleteArmTimer = null;
+let activeRange = "all";
+
+function noteKey(note) {
+  return `${note.line}:${note.time}`;
+}
+
+function selectedNotes() {
+  return allNotes.filter((note) => selected.has(noteKey(note)));
+}
 
 function filterNotes() {
   const query = searchEl.value.trim().toLowerCase();
-  if (!query) return allNotes;
-  return allNotes.filter((note) => note.content.toLowerCase().includes(query));
+  const from = rangeStart(activeRange);
+  return allNotes.filter((note) => {
+    if (query && !note.content.toLowerCase().includes(query)) return false;
+    if (from !== -Infinity) {
+      const t = new Date(note.time).getTime();
+      if (Number.isNaN(t) || t < from) return false;
+    }
+    return true;
+  });
 }
 
-searchEl.addEventListener("input", () => render(filterNotes()));
+searchEl.addEventListener("input", () => {
+  if (selectMode) clearSelection();
+  render(filterNotes());
+});
+
+filterChips.forEach((chip) => {
+  chip.addEventListener("click", () => {
+    if (activeRange === chip.dataset.range) return;
+    activeRange = chip.dataset.range;
+    filterChips.forEach((c) => c.classList.toggle("is-active", c === chip));
+    if (selectMode) clearSelection();
+    render(filterNotes());
+  });
+});
+
+/* ---------- 多选模式 ---------- */
+
+function updateSelectBar() {
+  const n = selected.size;
+  selectCount.textContent = `已选 ${n} 条`;
+  selectCopy.disabled = n === 0;
+  selectExport.disabled = n === 0;
+  selectDelete.disabled = n === 0;
+}
+
+function resetDeleteArm() {
+  deleteArmed = false;
+  clearTimeout(deleteArmTimer);
+  selectDelete.textContent = "删除";
+  selectDelete.classList.remove("is-armed");
+}
+
+function clearSelection() {
+  selected.clear();
+  resetDeleteArm();
+  updateSelectBar();
+}
+
+function setSelectMode(on) {
+  selectMode = on;
+  clearSelection();
+  selectBtn.textContent = on ? "完成" : "选择";
+  selectBtn.classList.toggle("is-active", on);
+  cardEl.classList.toggle("selecting", on);
+  selectBar.classList.toggle("hidden", !on);
+  render(filterNotes());
+}
+
+function toggleSelected(note, item) {
+  const key = noteKey(note);
+  if (selected.has(key)) selected.delete(key);
+  else selected.add(key);
+  const isSelected = selected.has(key);
+  item.classList.toggle("is-selected", isSelected);
+  item.querySelector(".select-box")?.classList.toggle("is-checked", isSelected);
+  resetDeleteArm();
+  updateSelectBar();
+}
+
+selectBtn.addEventListener("click", () => setSelectMode(!selectMode));
+selectCancel.addEventListener("click", () => setSelectMode(false));
+
+/* ---------- 批量复制 / 导出 / 删除 ---------- */
+
+selectCopy.addEventListener("click", async () => {
+  const notes = selectedNotes();
+  if (!notes.length) return;
+  // 原始正文按列表顺序（最新在前）拼接，不加时间戳与渲染标记
+  const ok = await copyText(notes.map((note) => note.content).join("\n\n"));
+  showToast(ok ? `已复制 ${notes.length} 条` : "复制失败");
+});
+
+selectExport.addEventListener("click", exportSelected);
+
+selectDelete.addEventListener("click", () => {
+  if (!selected.size) return;
+  if (!deleteArmed) {
+    deleteArmed = true;
+    selectDelete.textContent = "确认删除";
+    selectDelete.classList.add("is-armed");
+    deleteArmTimer = setTimeout(resetDeleteArm, 3000);
+    return;
+  }
+  resetDeleteArm();
+  deleteSelected();
+});
+
+async function exportSelected() {
+  const notes = selectedNotes();
+  if (!notes.length) return;
+
+  const sheet = buildExportSheet(notes);
+  document.body.appendChild(sheet);
+  showToast("正在生成图片…");
+
+  let dataUrl;
+  try {
+    dataUrl = await toPng(sheet, {
+      pixelRatio: 2,
+      // 仅使用系统字体，跳过字体内嵌，避免 WebKitGTK 下的样式表读取问题
+      skipFonts: true,
+      backgroundColor: getComputedStyle(document.body).backgroundColor,
+    });
+  } catch (err) {
+    showToast(`生成图片失败：${err}`);
+    return;
+  } finally {
+    sheet.remove();
+  }
+
+  try {
+    const path = await invoke("save_image", {
+      data: Array.from(dataUrlToBytes(dataUrl)),
+      defaultName: exportFileName(),
+    });
+    showToast(path ? `已保存到 ${path}` : "已取消导出");
+  } catch (err) {
+    showToast(`保存失败：${err}`);
+  }
+}
+
+function buildExportSheet(notes) {
+  const sheet = document.createElement("div");
+  sheet.className = "export-sheet";
+  const meta = `${RANGE_LABELS[activeRange]} · ${notes.length} 条`;
+  sheet.innerHTML = `
+    <div class="export-head">
+      <div class="export-brand">Spark</div>
+      <div class="export-meta">${escapeHtml(meta)}</div>
+    </div>
+    ${notes
+      .map(
+        (note) => `
+      <div class="export-note">
+        <div class="export-note-time">${escapeHtml(formatFullTime(note.time))}</div>
+        <div class="export-note-content">${renderOutline(note.content)}</div>
+      </div>`
+      )
+      .join("")}`;
+  return sheet;
+}
+
+function dataUrlToBytes(dataUrl) {
+  const bin = atob(dataUrl.split(",")[1] || "");
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
+function exportFileName() {
+  const d = new Date();
+  return `spark-notes-${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}-${pad2(d.getHours())}${pad2(d.getMinutes())}.png`;
+}
+
+async function deleteSelected() {
+  const notes = selectedNotes();
+  if (!notes.length) return;
+  // 行号从大到小删除，后续删除不会让前面的行号偏移
+  const ordered = [...notes].sort((a, b) => b.line - a.line);
+  let ok = 0;
+  let fail = 0;
+  for (const note of ordered) {
+    try {
+      await invoke("delete_note", { line: note.line, expectedTime: note.time });
+      ok += 1;
+    } catch {
+      fail += 1;
+    }
+  }
+  setSelectMode(false);
+  await load();
+  showToast(fail ? `已删除 ${ok} 条，${fail} 条失败` : `已删除 ${ok} 条`);
+}
 
 async function load() {
   // 编辑态下窗口聚焦等事件可能触发刷新，避免覆盖正在编辑的内容
   if (editingNote) return;
   try {
     allNotes = await invoke("list_notes");
+    // 记录被外部改动后，剔除已不存在的选择项
+    const validKeys = new Set(allNotes.map(noteKey));
+    for (const key of selected) {
+      if (!validKeys.has(key)) selected.delete(key);
+    }
+    updateSelectBar();
     render(filterNotes());
     highlightLatest(takeLastSavedAt());
   } catch (err) {
@@ -246,7 +492,13 @@ document.getElementById("settings-btn").addEventListener("click", () => {
   invoke("open_settings");
 });
 window.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") hideWindow();
+  if (event.key !== "Escape") return;
+  // 多选模式下 Esc 先退出选择，避免误关窗口丢失已选内容
+  if (selectMode) {
+    setSelectMode(false);
+    return;
+  }
+  hideWindow();
 });
 
 // 编辑态的 CodeMirror 实例：列表标记实时渲染为圆点，复用与速记一致的快捷键。
