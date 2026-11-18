@@ -1,5 +1,5 @@
 import { EditorView, keymap, placeholder as cmPlaceholder } from "@codemirror/view";
-import { EditorState } from "@codemirror/state";
+import { Compartment, EditorState } from "@codemirror/state";
 import { indentUnit } from "@codemirror/language";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { markdown } from "@codemirror/lang-markdown";
@@ -7,6 +7,19 @@ import { markdownView } from "./markdownView.js";
 import { sparkTheme } from "./theme.js";
 
 export { EditorView };
+
+// 主题是可动态重配的 compartment：切换时只替换主题扩展，文档与撤销历史保持不变
+const themeCompartment = new Compartment();
+
+function currentIsDark() {
+  return document.documentElement.dataset.theme !== "light";
+}
+
+export function setEditorTheme(view, isDark) {
+  view.dispatch({
+    effects: themeCompartment.reconfigure(sparkTheme(isDark)),
+  });
+}
 
 // 把行首空白规范为纯 Tab：markdown 语言默认用空格缩进，可能与本模块的
 // 「每层级一个 \t」混出「\t 」（tab 后跟空格），导致 Shift+Tab 第二次只退一格空格。
@@ -139,7 +152,7 @@ export function createEditor(opts) {
         markdown(),
         indentUnit.of("\t"),
         markdownView(),
-        sparkTheme,
+        themeCompartment.of(sparkTheme(currentIsDark())),
         EditorView.lineWrapping,
         placeholder ? cmPlaceholder(makePlaceholder(placeholder)) : [],
         EditorView.updateListener.of((u) => {

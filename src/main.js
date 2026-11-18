@@ -1,4 +1,10 @@
-import { createEditor, indentSelection, enterWithIndent } from "./editor/index.js";
+import {
+  createEditor,
+  indentSelection,
+  enterWithIndent,
+  setEditorTheme,
+} from "./editor/index.js";
+import { initTheme } from "./theme.js";
 
 const { invoke } = window.__TAURI__.core;
 const { getCurrentWindow } = window.__TAURI__.window;
@@ -165,6 +171,13 @@ editorView = createEditor({
     },
   },
 });
+
+// 主题切换：颜色走 CSS 变量，这里只需同步 CodeMirror 的 dark 标志与语法高亮
+window.addEventListener("spark:theme", (event) => {
+  setEditorTheme(editorView, event.detail.isDark);
+});
+
+initTheme();
 
 // 恢复上次未保存的草稿（托盘退出后重开也能接着写）
 const draft = loadDraft();

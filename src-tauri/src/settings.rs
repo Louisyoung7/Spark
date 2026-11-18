@@ -7,7 +7,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_autostart::ManagerExt;
 
 use crate::config::{effective_hotkey, HOTKEY_HISTORY, HOTKEY_MAIN};
@@ -24,6 +24,9 @@ pub struct AppSettings {
     pub hotkey_main: Option<String>,
     #[serde(default)]
     pub hotkey_history: Option<String>,
+    /// 主题：None 表示跟随系统；持久化取值 "light" / "dark"
+    #[serde(default)]
+    pub theme: Option<String>,
 }
 
 /// 全局共享的设置状态。启动时一次性从磁盘加载，写入时持久化。
@@ -103,6 +106,17 @@ pub struct SettingsView {
     pub hotkey_history: String,
     pub hotkey_history_default: String,
     pub hotkey_history_custom: Option<String>,
+    /// 当前主题模式：light / dark / system
+    pub theme: String,
+}
+
+/// 把存储值归一为前端可用的主题模式，非法值一律按跟随系统处理
+fn normalize_theme(theme: Option<&str>) -> &'static str {
+    match theme {
+        Some("light") => "light",
+        Some("dark") => "dark",
+        _ => "system",
+    }
 }
 
 #[tauri::command]
@@ -129,7 +143,23 @@ pub fn get_settings(app: AppHandle) -> Result<SettingsView, String> {
         hotkey_history: effective_hotkey(s.hotkey_history.clone(), HOTKEY_HISTORY),
         hotkey_history_default: HOTKEY_HISTORY.to_string(),
         hotkey_history_custom: s.hotkey_history.clone(),
+        theme: normalize_theme(s.theme.as_deref()).to_string(),
     })
+}
+
+/// 切换主题并广播给所有窗口。`None` / "system" 表示跟随系统。
+#[tauri::command]
+pub fn set_theme(app: AppHandle, theme: Option<String>) -> Result<(), String> {
+    let stored = match theme.as_deref() {
+        Some("light") => Some("light".to_string()),
+        Some("dark") => Some("dark".to_string()),
+        None | Some("system") => None,
+        Some(other) => return Err(format!("未知主题: {other}")),
+    };
+    update(&app, |g| g.theme = stored)?;
+    let mode = normalize_theme(theme.as_deref());
+    // 广播模式而非解析结果：各窗口需知道自己是否「跟随系统」
+    app.emit("theme-changed", mode).map_err(|e| e.to_string())
 }
 
 /// 切换登录自启；同时把目标态持久化到 settings.json（保持与插件状态一致）

@@ -1,5 +1,12 @@
-import { createEditor, indentSelection, enterWithIndent, EditorView } from "./editor/index.js";
+import {
+  createEditor,
+  indentSelection,
+  enterWithIndent,
+  EditorView,
+  setEditorTheme,
+} from "./editor/index.js";
 import { escapeHtml, renderOutline } from "./markdown/renderHtml.js";
+import { initTheme } from "./theme.js";
 
 const { invoke } = window.__TAURI__.core;
 const { getCurrentWindow } = window.__TAURI__.window;
@@ -282,3 +289,10 @@ editEditor = createEditor({
     }),
   ],
 });
+
+// 主题切换：重配编辑态编辑器，不重建文档
+window.addEventListener("spark:theme", (event) => {
+  setEditorTheme(editEditor, event.detail.isDark);
+});
+
+initTheme();

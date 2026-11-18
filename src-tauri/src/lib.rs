@@ -113,6 +113,7 @@ pub fn run() {
             settings::set_autostart,
             settings::pick_notes_path,
             settings::set_notes_path,
+            settings::set_theme,
             hotkeys::set_hotkeys,
             hotkeys::begin_hotkey_capture,
             hotkeys::end_hotkey_capture,

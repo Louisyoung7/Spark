@@ -8,7 +8,17 @@ import { tags as t } from "@lezer/highlight";
 const MONO =
   '"JetBrains Mono", "Fira Code", "SFMono-Regular", Consolas, monospace';
 
-export const sparkTheme = [
+// 预构建两份主题并缓存，避免每次切换都生成新的 StyleModule
+const themeCache = new Map();
+
+export function sparkTheme(isDark) {
+  const key = isDark ? "dark" : "light";
+  if (!themeCache.has(key)) themeCache.set(key, buildTheme(isDark));
+  return themeCache.get(key);
+}
+
+function buildTheme(isDark) {
+  return [
   EditorView.theme(
     {
       "&": {
@@ -120,7 +130,7 @@ export const sparkTheme = [
         fontWeight: "600",
       },
     },
-    { dark: true }
+    { dark: isDark }
   ),
 
   // 语法高亮：标题只调字号/字重，不改颜色，让 # 等标记保持弱化
@@ -157,7 +167,8 @@ export const sparkTheme = [
         { tag: t.contentSeparator, color: "var(--text-faint)" },
         { tag: t.quote, color: "var(--text-secondary)" },
       ],
-      { themeType: "dark" }
+      { themeType: isDark ? "dark" : "light" }
     )
   ),
-];
+  ];
+}

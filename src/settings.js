@@ -1,3 +1,5 @@
+import { initTheme, setTheme } from "./theme.js";
+
 const { invoke } = window.__TAURI__.core;
 const { getCurrentWindow } = window.__TAURI__.window;
 const { listen } = window.__TAURI__.event;
@@ -29,8 +31,16 @@ const els = {
   hotkeyMainCurrent: document.getElementById("hotkey-main-current"),
   hotkeyHistoryCurrent: document.getElementById("hotkey-history-current"),
   resetHotkeysBtn: document.getElementById("reset-hotkeys-btn"),
+  themeSegments: Array.from(document.querySelectorAll(".theme-segment")),
   status: document.getElementById("settings-status"),
 };
+
+// 主题选中态：三段按钮用 aria-pressed 表达当前模式
+function markTheme(mode) {
+  for (const btn of els.themeSegments) {
+    btn.setAttribute("aria-pressed", String(btn.dataset.theme === mode));
+  }
+}
 
 let statusTimer = null;
 function flashStatus(text, isError = false) {
@@ -58,6 +68,8 @@ async function load() {
       ? "已开启——登录后自动运行"
       : "关闭"
     : "当前环境不支持";
+
+  markTheme(s.theme || "system");
 
   els.notesPath.textContent = s.notes_path;
   els.notesPath.title = s.notes_path;
@@ -101,6 +113,23 @@ els.autostartToggle.addEventListener("change", async () => {
     flashStatus(`设置失败：${err}`, true);
   }
 });
+
+// ===== 主题 =====
+for (const btn of els.themeSegments) {
+  btn.addEventListener("click", async () => {
+    const mode = btn.dataset.theme;
+    markTheme(mode);
+    try {
+      await setTheme(mode);
+      flashStatus("主题已切换");
+    } catch (err) {
+      await load(); // 失败时回填后端真实值
+      flashStatus(`设置失败：${err}`, true);
+    }
+  });
+}
+
+initTheme();
 
 // ===== 笔记保存位置 =====
 els.pickPathBtn.addEventListener("click", async () => {
