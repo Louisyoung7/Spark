@@ -6,13 +6,17 @@ on:
   pull_request:
     branches: [main]
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
 jobs:
   rust:
-    name: Rust 检查（fmt / clippy / check）
+    name: Rust 检查与测试（fmt / clippy / test）
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v5
@@ -37,6 +41,17 @@ jobs:
         with:
           workspaces: src-tauri -> target
 
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      # tauri::generate_context! 编译期需要前端产物，先构建 dist
+      - name: 安装 npm 依赖并构建前端
+        run: |
+          npm ci
+          npm run build
+
       - name: cargo fmt --check
         working-directory: src-tauri
         run: cargo fmt --all -- --check
@@ -45,12 +60,12 @@ jobs:
         working-directory: src-tauri
         run: cargo clippy --all-targets -- -D warnings
 
-      - name: cargo check
+      - name: cargo test
         working-directory: src-tauri
-        run: cargo check --all-targets
+        run: cargo test --all-targets
 
   frontend:
-    name: 前端静态检查
+    name: 前端检查与构建
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v5
@@ -58,6 +73,10 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 22
+          cache: npm
+
+      - name: 安装 npm 依赖
+        run: npm ci
 
       - name: 语法检查（HTML 引用的资源必须存在）
         run: |
@@ -94,3 +113,6 @@ jobs:
             JSON.parse(fs.readFileSync("package.json", "utf8"));
             console.log("JSON 配置解析通过");
           '
+
+      - name: 构建前端
+        run: npm run build

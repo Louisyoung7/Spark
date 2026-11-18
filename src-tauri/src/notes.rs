@@ -198,3 +198,80 @@ pub fn delete_note(app: AppHandle, line: usize, expected_time: String) -> Result
     write_lines_atomic(&path, &lines)?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 构造一条合法记录行
+    fn entry(time: &str) -> String {
+        serde_json::json!({ "time": time, "content": "内容" }).to_string()
+    }
+
+    #[test]
+    fn verify_line_returns_time_when_matched() {
+        let lines = vec![entry("t1"), entry("t2")];
+        assert_eq!(verify_line(&lines, 2, "t2").unwrap(), "t2");
+    }
+
+    #[test]
+    fn verify_line_rejects_changed_time() {
+        let lines = vec![entry("t1")];
+        assert!(verify_line(&lines, 1, "t0").is_err());
+    }
+
+    #[test]
+    fn verify_line_rejects_out_of_range_and_blank() {
+        let lines = vec![String::new(), entry("t1")];
+        assert!(verify_line(&lines, 0, "t1").is_err());
+        assert!(verify_line(&lines, 3, "t1").is_err());
+        assert!(verify_line(&lines, 1, "").is_err());
+    }
+
+    #[test]
+    fn verify_line_rejects_corrupted_json() {
+        let lines = vec!["not json".to_string()];
+        assert!(verify_line(&lines, 1, "t1").is_err());
+    }
+
+    #[test]
+    fn sibling_path_keeps_original_extension() {
+        let bak = sibling_path(Path::new("/tmp/notes.jsonl"), ".bak").unwrap();
+        assert_eq!(bak, PathBuf::from("/tmp/notes.jsonl.bak"));
+        let bak = sibling_path(Path::new("/tmp/notes.txt"), ".bak").unwrap();
+        assert_eq!(bak, PathBuf::from("/tmp/notes.txt.bak"));
+    }
+
+    #[test]
+    fn write_lines_atomic_writes_file_and_keeps_backup() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("notes.jsonl");
+        fs::write(&path, "old\n").unwrap();
+
+        write_lines_atomic(&path, &[entry("t1"), String::new(), entry("t2")]).unwrap();
+
+        let text = fs::read_to_string(&path).unwrap();
+        assert_eq!(text, format!("{}\n\n{}\n", entry("t1"), entry("t2")));
+        assert_eq!(
+            fs::read_to_string(dir.path().join("notes.jsonl.bak")).unwrap(),
+            "old\n"
+        );
+        assert!(!dir.path().join("notes.jsonl.tmp").exists());
+    }
+
+    #[test]
+    fn write_lines_atomic_handles_empty_slice() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("notes.jsonl");
+        write_lines_atomic(&path, &[]).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "");
+    }
+
+    #[test]
+    fn read_lines_keeps_physical_line_positions() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("notes.jsonl");
+        fs::write(&path, format!("{}\n\n{}\n", entry("t1"), entry("t2"))).unwrap();
+        assert_eq!(read_lines(&path).unwrap().len(), 3);
+    }
+}

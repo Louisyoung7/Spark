@@ -42,10 +42,20 @@ pub fn load_settings(app: &AppHandle) -> AppSettings {
     if !path.exists() {
         return AppSettings::default();
     }
-    fs::read_to_string(&path)
-        .ok()
-        .and_then(|t| serde_json::from_str::<AppSettings>(&t).ok())
-        .unwrap_or_default()
+    let text = match fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(e) => {
+            log::warn!("读取设置失败，使用默认设置（{}）: {e}", path.display());
+            return AppSettings::default();
+        }
+    };
+    match serde_json::from_str::<AppSettings>(&text) {
+        Ok(s) => s,
+        Err(e) => {
+            log::warn!("解析设置失败，使用默认设置（{}）: {e}", path.display());
+            AppSettings::default()
+        }
+    }
 }
 
 pub fn save_settings(app: &AppHandle, s: &AppSettings) -> Result<(), String> {
