@@ -274,6 +274,10 @@ body {
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-pill);
   padding: 6px 16px;
+  max-width: calc(100% - 32px);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   opacity: 0;
   pointer-events: none;
   box-shadow: var(--shadow-card);
@@ -334,7 +338,6 @@ body {
 
 .history-search {
   padding: 8px 16px 10px;
-  border-bottom: 1px solid var(--border-subtle);
   flex-shrink: 0;
 }
 
@@ -357,6 +360,36 @@ body {
 
 .history-search-input::placeholder {
   color: var(--text-muted);
+}
+
+/* 时间筛选：胶囊按钮，选中态用弱强调底 */
+.history-filters {
+  display: flex;
+  gap: 6px;
+  padding: 0 16px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+
+.filter-chip {
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--surface);
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  padding: 3px 10px;
+  cursor: pointer;
+  transition: color var(--duration-fast) ease, background var(--duration-fast) ease;
+}
+
+.filter-chip:hover {
+  color: var(--text);
+}
+
+.filter-chip.is-active {
+  color: var(--accent);
+  background: var(--accent-soft);
 }
 
 .history-list {
@@ -493,6 +526,109 @@ body {
 
 .history-item-actions .act-del:hover {
   color: var(--danger);
+}
+
+/* ---------- 多选模式 ---------- */
+
+.select-toggle.is-active {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/* 多选时隐藏单条操作图标，整张卡片作为勾选区域 */
+.history-card.selecting .history-item-actions {
+  display: none;
+}
+
+.history-item.is-selected {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.select-box {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: var(--text-on-accent);
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xs);
+  transition: background var(--duration-fast) ease, border-color var(--duration-fast) ease;
+}
+
+.select-box svg {
+  width: 12px;
+  height: 12px;
+  opacity: 0;
+}
+
+.select-box.is-checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.select-box.is-checked svg {
+  opacity: 1;
+}
+
+/* 底部操作条：常驻于列表之下，不遮挡记录 */
+.history-select-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg);
+  flex-shrink: 0;
+}
+
+.history-select-count {
+  flex: 1;
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.bar-btn {
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--duration-fast) ease, color var(--duration-fast) ease,
+    border-color var(--duration-fast) ease;
+}
+
+.bar-btn:hover:not(:disabled) {
+  background: var(--surface-strong);
+  color: var(--text);
+}
+
+.bar-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.bar-btn-danger {
+  color: var(--danger);
+}
+
+.bar-btn-danger.is-armed {
+  color: var(--text-on-accent);
+  background: var(--danger);
+  border-color: var(--danger);
+}
+
+/* 操作条出现后，把 toast 抬到其上方 */
+.history-card.selecting .history-toast {
+  bottom: 100px;
 }
 
 /* ---------- 编辑视图（覆盖整个历史窗口，体验与速记编辑器一致） ---------- */

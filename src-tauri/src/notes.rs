@@ -9,7 +9,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 
 use crate::settings;
 
@@ -129,6 +129,40 @@ pub fn list_notes(app: AppHandle) -> Result<Vec<NoteEntry>, String> {
     }
     notes.reverse(); // 最新在前
     Ok(notes)
+}
+
+/// 将前端生成的 PNG 字节写入用户选择的位置，返回保存路径；用户取消时返回 None。
+#[tauri::command]
+pub async fn save_image(
+    app: AppHandle,
+    data: Vec<u8>,
+    default_name: String,
+) -> Result<Option<String>, String> {
+    if data.is_empty() {
+        return Err("图片数据为空".into());
+    }
+    let start_dir = app
+        .path()
+        .download_dir()
+        .or_else(|_| app.path().home_dir())
+        .ok();
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut dlg = rfd::FileDialog::new()
+            .set_title("导出图片")
+            .set_file_name(&default_name)
+            .add_filter("PNG 图片", &["png"]);
+        if let Some(dir) = start_dir {
+            dlg = dlg.set_directory(dir);
+        }
+        let Some(path) = dlg.save_file() else {
+            return Ok::<_, String>(None);
+        };
+        fs::write(&path, &data).map_err(|e| format!("写入图片失败: {e}"))?;
+        Ok(Some(path.to_string_lossy().to_string()))
+    })
+    .await
+    .map_err(|e| format!("保存图片失败: {e}"))?
 }
 
 /// 取出某物理行的 `time`，并校验它仍与前端持有的值一致。
