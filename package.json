@@ -15,8 +15,7 @@
     "@codemirror/state": "^6.4.1",
     "@codemirror/view": "^6.34.0",
     "@lezer/highlight": "^1.2.5",
-    "@liminal-hq/plugin-desktop-integration": "^0.1.0",
-    "html-to-image": "^1.11.13"
+    "@liminal-hq/plugin-desktop-integration": "^0.1.0"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
