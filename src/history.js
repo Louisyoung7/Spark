@@ -1,4 +1,5 @@
 import { createEditor, indentSelection, enterWithIndent, EditorView } from "./editor/index.js";
+import { escapeHtml, renderOutline } from "./markdown/renderHtml.js";
 
 const { invoke } = window.__TAURI__.core;
 const { getCurrentWindow } = window.__TAURI__.window;
@@ -43,85 +44,6 @@ function formatTime(iso) {
   if (Number.isNaN(d.getTime())) return "";
   const pad = (n) => String(n).padStart(2, "0");
   return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
-function escapeHtml(s) {
-  return s.replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]
-  );
-}
-
-// 幕布式无序列表渲染：把带缩进的「- / * / + 」行渲染成嵌套 <ul>。
-// 非列表行按原换行保留为段落；笔记仍以纯文本存储，这里只做展示层转换。
-function renderOutline(text) {
-  const lines = text.split("\n");
-  let out = "";
-  const stack = []; // 各打开层级的缩进宽度
-  let paraBuf = [];
-
-  const indentOf = (line) => {
-    let n = 0;
-    for (const ch of line) {
-      if (ch === " " || ch === "\t") n++;
-      else break;
-    }
-    return n;
-  };
-  const isItem = (line) =>
-    /^[-*+]\s/.test(line.trimStart()) || /^[-*+]$/.test(line.trim());
-  const itemText = (line) => line.trimStart().replace(/^[-*+]\s?/, "");
-
-  const flushPara = () => {
-    if (paraBuf.length) {
-      out += `<p>${paraBuf.map(escapeHtml).join("<br>")}</p>`;
-      paraBuf = [];
-    }
-  };
-
-  for (const raw of lines) {
-    if (raw.trim() === "") {
-      flushPara();
-      while (stack.length) {
-        out += "</li></ul>";
-        stack.pop();
-      }
-      continue;
-    }
-    const indent = indentOf(raw);
-    if (!isItem(raw)) {
-      flushPara();
-      while (stack.length) {
-        out += "</li></ul>";
-        stack.pop();
-      }
-      paraBuf.push(raw);
-      continue;
-    }
-    flushPara();
-    const content = escapeHtml(itemText(raw));
-    while (stack.length && indent < stack[stack.length - 1]) {
-      out += "</li></ul>";
-      stack.pop();
-    }
-    if (stack.length === 0) {
-      out += "<ul>";
-      stack.push(indent);
-      out += `<li>${content}`;
-    } else if (indent > stack[stack.length - 1]) {
-      out += "<ul>";
-      stack.push(indent);
-      out += `<li>${content}`;
-    } else {
-      out += "</li>";
-      out += `<li>${content}`;
-    }
-  }
-  flushPara();
-  while (stack.length) {
-    out += "</li></ul>";
-    stack.pop();
-  }
-  return out;
 }
 
 async function copyText(text) {

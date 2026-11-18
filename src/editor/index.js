@@ -3,7 +3,7 @@ import { EditorState } from "@codemirror/state";
 import { indentUnit } from "@codemirror/language";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { markdown } from "@codemirror/lang-markdown";
-import { outlineList } from "./outlineList.js";
+import { markdownView } from "./markdownView.js";
 import { sparkTheme } from "./theme.js";
 
 export { EditorView };
@@ -138,7 +138,7 @@ export function createEditor(opts) {
         keymap.of([...keyBindings, ...defaultKeymap, ...historyKeymap]),
         markdown(),
         indentUnit.of("\t"),
-        outlineList(),
+        markdownView(),
         sparkTheme,
         EditorView.lineWrapping,
         placeholder ? cmPlaceholder(makePlaceholder(placeholder)) : [],
