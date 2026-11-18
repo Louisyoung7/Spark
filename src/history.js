@@ -137,11 +137,13 @@ function render(notes) {
     item.querySelector(".act-edit").addEventListener("click", () => enterEdit(note));
     item.querySelector(".act-del").addEventListener("click", async () => {
       try {
-        await invoke("delete_note", { line: note.line });
+        await invoke("delete_note", { line: note.line, expectedTime: note.time });
         await load();
         showToast("已删除");
       } catch (err) {
         showToast(`删除失败：${err}`);
+        // 记录可能已被外部改动，重新拉取避免列表继续指向错误行号
+        await load();
       }
     });
     listEl.appendChild(item);
@@ -195,7 +197,7 @@ async function saveEdit() {
   }
   const note = editingNote;
   try {
-    await invoke("edit_note", { line: note.line, content });
+    await invoke("edit_note", { line: note.line, content, expectedTime: note.time });
     showToast("已保存");
     exitEdit();
     await load(); // 重新拉取并刷新，确保与后端一致

@@ -6,13 +6,25 @@
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard};
 
 use tauri::AppHandle;
 
 use crate::settings;
 
-/// 一条历史记录（`line` 为文件中的 1 起始行号，作为删除用的稳定 id）
+/// 笔记文件操作的全局互斥锁。
+///
+/// 保存是追加写，编辑 / 删除是「读入 → 改写 → 原子替换」。
+/// 两者若不串行化，替换会把期间追加的新记录一并覆盖丢失。
+static NOTES_LOCK: Mutex<()> = Mutex::new(());
+
+/// 取得笔记文件锁；锁中毒说明此前有线程 panic，仍继续使用（数据本身由原子写保护）
+fn lock_notes() -> MutexGuard<'static, ()> {
+    NOTES_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// 一条历史记录（`line` 为文件中的 1 起始行号；`time` 作为乐观校验凭证）
 #[derive(serde::Serialize)]
 pub struct NoteEntry {
     pub line: usize,
@@ -27,9 +39,24 @@ fn read_lines(path: &Path) -> Result<Vec<String>, String> {
     Ok(text.lines().map(|l| l.to_string()).collect())
 }
 
-/// 先写临时文件再原子替换，避免写一半崩溃损坏数据。
+/// 与笔记文件同目录、同名的附带后缀路径（`notes.jsonl` → `notes.jsonl.bak`）。
+/// 不用 `with_extension`，避免自定义文件名（如 `notes.txt`）被改成别的扩展名。
+fn sibling_path(path: &Path, suffix: &str) -> Result<PathBuf, String> {
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| "笔记文件路径无效".to_string())?;
+    Ok(path.with_file_name(format!("{name}{suffix}")))
+}
+
+/// 先备份原文件，再写临时文件并原子替换，避免写一半崩溃损坏数据；
+/// 一次误删 / 误改后仍可从 `.bak` 找回上一版。
 fn write_lines_atomic(path: &Path, lines: &[String]) -> Result<(), String> {
-    let tmp = path.with_extension("jsonl.tmp");
+    if path.exists() {
+        let backup = sibling_path(path, ".bak")?;
+        fs::copy(path, &backup).map_err(|e| format!("备份原文件失败: {e}"))?;
+    }
+    let tmp = sibling_path(path, ".tmp")?;
     let body = if lines.is_empty() {
         String::new()
     } else {
@@ -50,6 +77,7 @@ pub fn save_note(app: AppHandle, content: String) -> Result<(), String> {
     }
 
     let path = settings::notes_path(&app)?;
+    let _guard = lock_notes();
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir).map_err(|e| format!("创建目录失败: {e}"))?;
     }
@@ -103,37 +131,52 @@ pub fn list_notes(app: AppHandle) -> Result<Vec<NoteEntry>, String> {
     Ok(notes)
 }
 
+/// 取出某物理行的 `time`，并校验它仍与前端持有的值一致。
+///
+/// 行号只是位置而非稳定 id：文件被外部修改后下标可能指向另一条记录。
+/// 用 `time` 做乐观校验，不一致时拒绝写入，避免静默改错 / 删错。
+fn verify_line(lines: &[String], line: usize, expected_time: &str) -> Result<String, String> {
+    if line == 0 || line > lines.len() {
+        return Err("记录不存在".into());
+    }
+    let target = lines[line - 1].trim();
+    if target.is_empty() {
+        return Err("记录不存在".into());
+    }
+    let existing = serde_json::from_str::<serde_json::Value>(target)
+        .map_err(|e| format!("记录解析失败: {e}"))?;
+    let time = existing
+        .get("time")
+        .and_then(|t| t.as_str())
+        .unwrap_or_default();
+    if time != expected_time {
+        return Err("记录已变化，请刷新后重试".into());
+    }
+    Ok(time.to_string())
+}
+
 /// 编辑指定行（1 起始）的笔记内容，保留原 time；空内容返回错误。
 #[tauri::command]
-pub fn edit_note(app: AppHandle, line: usize, content: String) -> Result<(), String> {
+pub fn edit_note(
+    app: AppHandle,
+    line: usize,
+    content: String,
+    expected_time: String,
+) -> Result<(), String> {
     let content = content.trim();
     if content.is_empty() {
         return Err("内容为空".into());
     }
 
     let path = settings::notes_path(&app)?;
+    let _guard = lock_notes();
     if !path.exists() {
         return Err("记录不存在".into());
     }
     let mut lines = read_lines(&path)?;
-    if line == 0 || line > lines.len() {
-        return Err("记录不存在".into());
-    }
 
-    // 解析原始记录，保留 time，仅更新 content
-    let time = {
-        let target = lines[line - 1].trim();
-        if target.is_empty() {
-            return Err("记录不存在".into());
-        }
-        let existing = serde_json::from_str::<serde_json::Value>(target)
-            .map_err(|e| format!("记录解析失败: {e}"))?;
-        existing
-            .get("time")
-            .and_then(|t| t.as_str())
-            .unwrap_or_default()
-            .to_string()
-    };
+    // 解析原始记录，校验 time 未变化，仅更新 content
+    let time = verify_line(&lines, line, &expected_time)?;
     lines[line - 1] = serde_json::json!({ "time": time, "content": content }).to_string();
 
     write_lines_atomic(&path, &lines)?;
@@ -142,18 +185,14 @@ pub fn edit_note(app: AppHandle, line: usize, content: String) -> Result<(), Str
 
 /// 删除指定行（1 起始）的笔记，其余行写回。
 #[tauri::command]
-pub fn delete_note(app: AppHandle, line: usize) -> Result<(), String> {
+pub fn delete_note(app: AppHandle, line: usize, expected_time: String) -> Result<(), String> {
     let path = settings::notes_path(&app)?;
+    let _guard = lock_notes();
     if !path.exists() {
         return Ok(());
     }
     let mut lines = read_lines(&path)?;
-    if line == 0 || line > lines.len() {
-        return Err("记录不存在".into());
-    }
-    if lines[line - 1].trim().is_empty() {
-        return Err("记录不存在".into());
-    }
+    verify_line(&lines, line, &expected_time)?;
     lines.remove(line - 1);
 
     write_lines_atomic(&path, &lines)?;
