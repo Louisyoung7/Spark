@@ -1,12 +1,8 @@
 import { EditorView } from "@codemirror/view";
-import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
-import { tags as t } from "@lezer/highlight";
 
 // 与设计令牌对齐的 CodeMirror 主题。
-// 纯文本存储，仅控制编辑器视觉；颜色统一走 styles.css 的 CSS 变量，
-// 后续调整配色只需要改令牌。
-const MONO =
-  '"JetBrains Mono", "Fira Code", "SFMono-Regular", Consolas, monospace';
+// 只负责编辑器整体视觉与列表层级样式，正文其余部分保持纯文本。
+// 颜色统一走 styles.css 的 CSS 变量，后续调整配色只需要改令牌。
 
 // 预构建两份主题并缓存，避免每次切换都生成新的 StyleModule
 const themeCache = new Map();
@@ -18,8 +14,7 @@ export function sparkTheme(isDark) {
 }
 
 function buildTheme(isDark) {
-  return [
-  EditorView.theme(
+  return EditorView.theme(
     {
       "&": {
         height: "100%",
@@ -66,109 +61,25 @@ function buildTheme(isDark) {
         whiteSpace: "pre",
       },
 
-      // ---------- 块级结构 ----------
-
-      // 标题行：上下留白形成段落节奏
-      ".cm-heading-line": {
-        paddingTop: "10px",
-        paddingBottom: "2px",
-      },
-      // 引用：3px 左侧强调条 + 极淡背景
-      ".cm-quote-line": {
-        borderLeft: "3px solid var(--accent)",
-        paddingLeft: "10px",
-        backgroundColor: "var(--quote-bg)",
-        borderRadius: "0 var(--radius-xs) var(--radius-xs) 0",
-        color: "var(--text-secondary)",
-      },
-      // 围栏代码块：整行底色 + 等宽字体
-      ".cm-code-line": {
-        backgroundColor: "var(--surface)",
-        fontFamily: MONO,
-        fontSize: "13px",
-      },
-      // 首尾行圆角，让整行底色读作一个代码块
-      ".cm-code-first": {
-        borderTopLeftRadius: "var(--radius-sm)",
-        borderTopRightRadius: "var(--radius-sm)",
-        paddingTop: "4px",
-      },
-      ".cm-code-last": {
-        borderBottomLeftRadius: "var(--radius-sm)",
-        borderBottomRightRadius: "var(--radius-sm)",
-        paddingBottom: "4px",
-      },
-      // 代码块内部的行内 token 不参与胶囊样式（覆盖语法高亮自带的底色/内边距）
-      ".cm-code-line span": {
-        backgroundColor: "transparent",
-        borderRadius: "0",
-        padding: "0",
-        fontSize: "inherit",
-        color: "var(--text-secondary)",
-      },
-      // 分割线：弱化字符，并用删除线把零散的 - 连成一条细线
-      ".cm-hr-line": {
-        color: "var(--text-faint)",
-        textDecoration: "line-through",
-        textDecorationColor: "var(--border-strong)",
-      },
-
       // ---------- 列表 ----------
 
-      // 列表圆点：输入「- / * / + 」后实时绘制，按层级换色
+      // 列表圆点：用 CSS 绘制的小圆点，避免字体符号的高低与大小不一致；
+      // 层级只靠缩进表达，不再用颜色区分
       ".cm-bullet": {
-        color: "var(--bullet-1)",
         display: "inline-block",
-        paddingRight: "0.4em",
+        width: "0.34em",
+        height: "0.34em",
+        marginRight: "0.3em",
+        borderRadius: "50%",
+        backgroundColor: "var(--text-muted)",
+        verticalAlign: "middle",
       },
-      ".cm-bullet-1": { color: "var(--bullet-1)" },
-      ".cm-bullet-2": { color: "var(--bullet-2)" },
-      ".cm-bullet-3": { color: "var(--bullet-3)" },
-      // 有序列表序号
+      // 有序列表序号：弱化颜色，数字等宽避免换行时跳动
       ".cm-list-marker": {
-        color: "var(--bullet-1)",
-        fontWeight: "600",
+        color: "var(--text-muted)",
+        fontVariantNumeric: "tabular-nums",
       },
     },
     { dark: isDark }
-  ),
-
-  // 语法高亮：标题只调字号/字重，不改颜色，让 # 等标记保持弱化
-  syntaxHighlighting(
-    HighlightStyle.define(
-      [
-        { tag: t.heading1, fontSize: "20px", fontWeight: "600", lineHeight: "1.4" },
-        { tag: t.heading2, fontSize: "18px", fontWeight: "600", lineHeight: "1.4" },
-        { tag: t.heading3, fontSize: "16px", fontWeight: "600", lineHeight: "1.45" },
-        { tag: t.heading4, fontSize: "15px", fontWeight: "600" },
-        { tag: t.heading5, fontSize: "15px", fontWeight: "600" },
-        { tag: t.heading6, fontSize: "15px", fontWeight: "600" },
-        { tag: t.strong, fontWeight: "600" },
-        { tag: t.emphasis, fontStyle: "italic" },
-        {
-          tag: t.strikethrough,
-          textDecoration: "line-through",
-          color: "var(--text-muted)",
-        },
-        // 行内代码胶囊；代码块内部由 .cm-code-line span 覆盖回纯文本样式
-        {
-          tag: t.monospace,
-          fontFamily: MONO,
-          fontSize: "0.9em",
-          color: "var(--code)",
-          backgroundColor: "var(--surface-strong)",
-          borderRadius: "var(--radius-xs)",
-          padding: "1px 5px",
-        },
-        { tag: t.link, color: "var(--accent)", textDecoration: "underline" },
-        { tag: t.url, color: "var(--text-muted)" },
-        // 所有语法标记（#、**、反引号、>、-）统一弱化
-        { tag: t.processingInstruction, color: "var(--text-faint)" },
-        { tag: t.contentSeparator, color: "var(--text-faint)" },
-        { tag: t.quote, color: "var(--text-secondary)" },
-      ],
-      { themeType: isDark ? "dark" : "light" }
-    )
-  ),
-  ];
+  );
 }

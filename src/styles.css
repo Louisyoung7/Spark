@@ -23,17 +23,11 @@
   --accent-active: #5d92ee;
   --danger: #f38ba8;
   --warning: #f9e2af;
-  --code: #f5c2e7;
   --accent-soft: rgba(137, 180, 250, 0.16);
   --text-on-accent: #1e1e2e;
 
-  /* 列表圆点层级色：accent → lavender → mauve */
-  --bullet-1: var(--accent);
-  --bullet-2: #b4befe;
-  --bullet-3: #cba6f7;
 
-  /* 引用底色与浮层阴影 */
-  --quote-bg: rgba(137, 180, 250, 0.06);
+  /* 浮层阴影 */
   --shadow-card: 0 8px 20px rgba(17, 17, 27, 0.28);
 
   /* 正文排版：编辑器与历史预览共用同一比例体系 */
@@ -74,14 +68,10 @@ html[data-theme="light"] {
   --accent-active: #1550c8;
   --danger: #d20f39;
   --warning: #b97a11;
-  --code: #8839ef;
   --accent-soft: rgba(30, 102, 245, 0.12);
   --text-on-accent: #ffffff;
 
-  --bullet-2: #7287fd;
-  --bullet-3: #8839ef;
 
-  --quote-bg: rgba(30, 102, 245, 0.06);
   --shadow-card: 0 8px 20px rgba(76, 79, 105, 0.12);
 }
 
@@ -466,99 +456,13 @@ body {
   margin: 3px 0;
 }
 
-/* 列表圆点按嵌套层级换色，与编辑器一致 */
+/* 列表标记统一用中性灰，层级只靠缩进表达 */
 .history-item-content li::marker {
-  color: var(--bullet-1);
-}
-
-.history-item-content li li::marker {
-  color: var(--bullet-2);
-}
-
-.history-item-content li li li::marker {
-  color: var(--bullet-3);
-}
-
-/* Markdown 行内与块级元素（与编辑器渲染保持同一套观感） */
-.history-item-content strong {
-  font-weight: 600;
-  color: var(--text);
-}
-
-.history-item-content em {
-  font-style: italic;
-}
-
-.history-item-content del {
   color: var(--text-muted);
 }
 
-/* 行内代码胶囊：与编辑器的行内代码保持一致 */
-.history-item-content code {
-  font-family: "JetBrains Mono", "Fira Code", "SFMono-Regular", Consolas, monospace;
-  font-size: 0.88em;
-  color: var(--code);
-  background: var(--surface-strong);
-  border-radius: var(--radius-xs);
-  padding: 1px 5px;
-}
-
-.history-item-content .md-link {
-  color: var(--accent);
-}
-
-/* 引用：3px 强调条 + 极淡底色 */
-.history-item-content blockquote {
-  margin: 6px 0;
-  padding: 4px 10px;
-  border-left: 3px solid var(--accent);
-  border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
-  background: var(--quote-bg);
-  color: var(--text-secondary);
-}
-
-/* 标题与编辑器同一比例阶梯（正文 14px：20/18/16/15 → 19/17/15/14） */
-.history-item-content .md-h1,
-.history-item-content .md-h2,
-.history-item-content .md-h3,
-.history-item-content .md-h4,
-.history-item-content .md-h5,
-.history-item-content .md-h6 {
-  font-weight: 600;
-  color: var(--text);
-  line-height: 1.45;
-  margin: 10px 0 4px;
-}
-
-.history-item-content .md-h1 { font-size: 19px; }
-.history-item-content .md-h2 { font-size: 17px; }
-.history-item-content .md-h3 { font-size: 15px; }
-.history-item-content .md-h4 { font-size: 14px; }
-.history-item-content .md-h5 { font-size: 14px; }
-.history-item-content .md-h6 { font-size: 14px; }
-
-.history-item-content .md-hr {
-  border: none;
-  border-top: 1px solid var(--border);
-  margin: 8px 0;
-}
-
-.history-item-content pre.md-code {
-  margin: 6px 0;
-  padding: 9px 11px;
-  background: var(--bg);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  overflow-x: auto;
-  line-height: 1.6;
-}
-
-.history-item-content pre.md-code code {
-  background: none;
-  padding: 0;
-  border-radius: 0;
-  font-size: 12px;
-  color: var(--text-secondary);
+.history-item-content ol {
+  font-variant-numeric: tabular-nums;
 }
 
 .history-item-actions {
