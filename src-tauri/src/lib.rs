@@ -35,6 +35,18 @@ use crate::windows::{
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // 日志最先注册，后续插件初始化失败时也能留下记录
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .targets([
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir {
+                        file_name: Some("spark".into()),
+                    }),
+                ])
+                .level(tauri_plugin_log::log::LevelFilter::Info)
+                .build(),
+        )
         // single-instance 必须最先注册：第二实例唤起已有窗口后自行退出
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             show_main_window(app);
@@ -49,6 +61,7 @@ pub fn run() {
             Some(vec!["--silent"]),
         ))
         .setup(|app| {
+            log::info!("Spark v{} 启动", env!("CARGO_PKG_VERSION"));
             app.manage(LastShownAt::default());
             app.manage(Resizing::default());
             app.manage(Capturing::default());
@@ -122,7 +135,10 @@ pub fn run() {
             windows::end_resize
         ])
         .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .unwrap_or_else(|e| {
+            log::error!("应用启动失败: {e}");
+            std::process::exit(1);
+        });
 }
 
 /// WebKitGTK 的内容最小尺寸会撑大窗口：

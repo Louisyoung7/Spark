@@ -52,9 +52,10 @@ jobs:
           TAG="${GITHUB_REF_NAME#v}"
           CONF=$(node -p "require('./src-tauri/tauri.conf.json').version")
           PKG=$(node -p "require('./package.json').version")
-          echo "tag=$TAG tauri.conf.json=$CONF package.json=$PKG"
-          if [ "$TAG" != "$CONF" ] || [ "$TAG" != "$PKG" ]; then
-            echo "::error::版本号不一致：tag=$TAG, tauri.conf.json=$CONF, package.json=$PKG"
+          CARGO=$(grep -m1 '^version' src-tauri/Cargo.toml | sed -E 's/^version = "(.*)"/\1/')
+          echo "tag=$TAG tauri.conf.json=$CONF package.json=$PKG Cargo.toml=$CARGO"
+          if [ "$TAG" != "$CONF" ] || [ "$TAG" != "$PKG" ] || [ "$TAG" != "$CARGO" ]; then
+            echo "::error::版本号不一致：tag=$TAG, tauri.conf.json=$CONF, package.json=$PKG, Cargo.toml=$CARGO"
             exit 1
           fi
 
