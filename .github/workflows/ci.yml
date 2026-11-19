@@ -98,10 +98,37 @@ jobs:
       - name: JS 语法检查
         run: |
           set -euo pipefail
-          for f in src/*.js; do
+          # 递归覆盖 src 下的所有 JS，避免子目录漏检
+          find src -type f -name "*.js" -print0 | while IFS= read -r -d '' f; do
             echo "检查 $f"
             node --check "$f"
           done
+
+      - name: ESLint
+        run: npm run lint
+
+      - name: 格式检查
+        run: npm run format:check
+
+      - name: 单元测试
+        run: npm test
+
+      - name: 校验版本号一致
+        run: |
+          set -euo pipefail
+          node -e '
+            const fs = require("fs");
+            const pkg = JSON.parse(fs.readFileSync("package.json", "utf8")).version;
+            const tauri = JSON.parse(fs.readFileSync("src-tauri/tauri.conf.json", "utf8")).version;
+            const cargo = fs
+              .readFileSync("src-tauri/Cargo.toml", "utf8")
+              .match(/^version\s*=\s*"([^"]+)"/m)[1];
+            if (new Set([pkg, tauri, cargo]).size !== 1) {
+              console.error(`版本号不一致: package.json=${pkg}, tauri.conf.json=${tauri}, Cargo.toml=${cargo}`);
+              process.exit(1);
+            }
+            console.log(`版本号一致: ${pkg}`);
+          '
 
       - name: 校验 Tauri 配置与权限声明
         run: |

@@ -1,0 +1,9 @@
+node_modules
+dist
+# HTML 的换行会引入额外空白节点，保持手写排版
+src/*.html
+package-lock.json
+src-tauri
+.trae
+.trae-html-share-packages
+.screenshots

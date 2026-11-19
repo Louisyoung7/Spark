@@ -1,26 +1,15 @@
-import {
-  createEditor,
-  indentSelection,
-  enterWithIndent,
-  setEditorTheme,
-} from "./editor/index.js";
+import { createEditor, setEditorTheme } from "./editor/index.js";
 import { initTheme } from "./theme.js";
+import { listKeyCommands, saveCommands } from "./shared/editorCommands.js";
+import { createFlashStatus } from "./shared/feedback.js";
+import { DRAFT_KEY, LAST_SAVED_KEY } from "./shared/keys.js";
+import { enableWindowDragging } from "./shared/window.js";
 
 const { invoke } = window.__TAURI__.core;
 const { getCurrentWindow } = window.__TAURI__.window;
 const { listen } = window.__TAURI__.event;
 
 const appWindow = getCurrentWindow();
-
-// 让顶栏可拖动窗口；按钮/输入控件上的按下不触发，避免影响点击
-function enableWindowDragging(header) {
-  if (!header) return;
-  header.addEventListener("mousedown", (event) => {
-    if (event.target.closest("button, input, textarea, a, select")) return;
-    event.preventDefault();
-    appWindow.startDragging();
-  });
-}
 
 const host = document.getElementById("note-input");
 const status = document.getElementById("status");
@@ -57,9 +46,6 @@ async function refreshHotkeyHint() {
 }
 
 // 草稿持久化：窗口隐藏不丢，托盘退出后重开也能接着写
-const DRAFT_KEY = "spark:draft";
-// 最近一次保存时间，供历史窗口定位并高亮刚写入的一条
-const LAST_SAVED_KEY = "spark:last-saved-at";
 let draftTimer = null;
 
 function writeDraft(text) {
@@ -141,26 +127,8 @@ editorView = createEditor({
     scheduleSaveDraft(text);
   },
   commands: {
-    Tab: (v) => {
-      indentSelection(v, 1);
-      return true;
-    },
-    "Shift-Tab": (v) => {
-      indentSelection(v, -1);
-      return true;
-    },
-    Enter: (v) => {
-      enterWithIndent(v);
-      return true;
-    },
-    "Ctrl-Enter": () => {
-      saveNote();
-      return true;
-    },
-    "Mod-Enter": () => {
-      saveNote();
-      return true;
-    },
+    ...listKeyCommands,
+    ...saveCommands(saveNote),
     Escape: () => {
       handleEscape();
       return true;
@@ -211,14 +179,7 @@ document.addEventListener("visibilitychange", () => {
 // 退出前兜底保存草稿
 window.addEventListener("beforeunload", flushDraft);
 
-let statusTimer = null;
-function flashStatus(text, isError = false) {
-  status.textContent = text;
-  status.classList.toggle("error", isError);
-  status.classList.add("show");
-  clearTimeout(statusTimer);
-  statusTimer = setTimeout(() => status.classList.remove("show"), 1500);
-}
+const flashStatus = createFlashStatus(status);
 
 // 保存成功后的延迟收起定时器（先给反馈再关窗）
 let hideTimer = null;
@@ -258,7 +219,7 @@ saveBtn.addEventListener("click", saveNote);
 
 // ===== 拖动窗口 =====
 // 无边框窗口没有标题栏，顶栏（按钮除外）承担拖动职责
-enableWindowDragging(document.querySelector("[data-drag-region]"));
+enableWindowDragging(appWindow, document.querySelector("[data-drag-region]"));
 
 // ===== 窗口缩放 =====
 // 无边框窗口没有系统缩放边框，用自定义 handle 触发 Tauri 原生 resize 拖拽。

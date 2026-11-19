@@ -1,7 +1,7 @@
 :root {
   color-scheme: dark;
-  font-family: "Segoe UI", "Noto Sans CJK SC", "PingFang SC",
-    "Microsoft YaHei", system-ui, sans-serif;
+  font-family:
+    "Segoe UI", "Noto Sans CJK SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
 
   /* 颜色：窗口底色、面板层级、描边与文字层级 */
   --bg: #1e1e2e;
@@ -25,7 +25,6 @@
   --warning: #f9e2af;
   --accent-soft: rgba(137, 180, 250, 0.16);
   --text-on-accent: #1e1e2e;
-
 
   /* 浮层阴影 */
   --shadow-card: 0 8px 20px rgba(17, 17, 27, 0.28);
@@ -70,7 +69,6 @@ html[data-theme="light"] {
   --warning: #b97a11;
   --accent-soft: rgba(30, 102, 245, 0.12);
   --text-on-accent: #ffffff;
-
 
   --shadow-card: 0 8px 20px rgba(76, 79, 105, 0.12);
 }
@@ -281,7 +279,9 @@ body {
   opacity: 0;
   pointer-events: none;
   box-shadow: var(--shadow-card);
-  transition: opacity var(--duration) ease, transform var(--duration) ease;
+  transition:
+    opacity var(--duration) ease,
+    transform var(--duration) ease;
 }
 
 .status.show,
@@ -380,7 +380,9 @@ body {
   border-radius: var(--radius-pill);
   padding: 3px 10px;
   cursor: pointer;
-  transition: color var(--duration-fast) ease, background var(--duration-fast) ease;
+  transition:
+    color var(--duration-fast) ease,
+    background var(--duration-fast) ease;
 }
 
 .filter-chip:hover {
@@ -417,8 +419,11 @@ body {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  transition: background var(--duration) ease, border-color var(--duration) ease,
-    transform var(--duration) ease, box-shadow var(--duration) ease;
+  transition:
+    background var(--duration) ease,
+    border-color var(--duration) ease,
+    transform var(--duration) ease,
+    box-shadow var(--duration) ease;
 }
 
 .history-item:hover,
@@ -556,7 +561,9 @@ body {
   background: transparent;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-xs);
-  transition: background var(--duration-fast) ease, border-color var(--duration-fast) ease;
+  transition:
+    background var(--duration-fast) ease,
+    border-color var(--duration-fast) ease;
 }
 
 .select-box svg {
@@ -602,7 +609,9 @@ body {
   padding: 4px 8px;
   cursor: pointer;
   white-space: nowrap;
-  transition: background var(--duration-fast) ease, color var(--duration-fast) ease,
+  transition:
+    background var(--duration-fast) ease,
+    color var(--duration-fast) ease,
     border-color var(--duration-fast) ease;
 }
 
@@ -838,7 +847,9 @@ body {
   border-radius: var(--radius-xs);
   padding: 5px 10px;
   cursor: pointer;
-  transition: background var(--duration-fast) ease, color var(--duration-fast) ease;
+  transition:
+    background var(--duration-fast) ease,
+    color var(--duration-fast) ease;
 }
 
 .theme-segment:hover {
@@ -1002,7 +1013,9 @@ body {
   padding: 5px 14px;
   opacity: 0;
   pointer-events: none;
-  transition: opacity var(--duration) ease, transform var(--duration) ease;
+  transition:
+    opacity var(--duration) ease,
+    transform var(--duration) ease;
 }
 
 .settings-status.show {

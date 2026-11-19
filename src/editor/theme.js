@@ -85,6 +85,6 @@ function buildTheme(isDark) {
         textIndent: "calc(-1 * var(--spark-hang, 0))",
       },
     },
-    { dark: isDark }
+    { dark: isDark },
   );
 }

@@ -4,10 +4,10 @@
 // 由 styles.css 的令牌覆盖负责换肤。system 模式以 matchMedia 为准：
 // Linux 上 Tauri 的 window.theme()/onThemeChanged 受 xdg portal 限制不可靠。
 
+import { THEME_CACHE_KEY } from "./shared/keys.js";
+
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
-
-const CACHE_KEY = "spark:theme-resolved";
 const MODES = new Set(["light", "dark", "system"]);
 const darkQuery = window.matchMedia("(prefers-color-scheme: dark)");
 
@@ -24,7 +24,7 @@ function isDarkMode(mode) {
 
 // 同步读取上次解析结果，尽量让首帧就是正确主题
 try {
-  const cached = localStorage.getItem(CACHE_KEY);
+  const cached = localStorage.getItem(THEME_CACHE_KEY);
   if (cached === "light" || cached === "dark") {
     document.documentElement.dataset.theme = cached;
   }
@@ -38,15 +38,13 @@ function paint(mode) {
   const changed = document.documentElement.dataset.theme !== resolved;
   document.documentElement.dataset.theme = resolved;
   try {
-    localStorage.setItem(CACHE_KEY, resolved);
+    localStorage.setItem(THEME_CACHE_KEY, resolved);
   } catch {
     // 忽略缓存失败
   }
   // 解析结果没变时不必让编辑器重配主题
   if (changed) {
-    window.dispatchEvent(
-      new CustomEvent("spark:theme", { detail: { mode, isDark } })
-    );
+    window.dispatchEvent(new CustomEvent("spark:theme", { detail: { mode, isDark } }));
   }
 }
 

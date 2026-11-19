@@ -1,4 +1,6 @@
 import { initTheme, setTheme } from "./theme.js";
+import { createFlashStatus } from "./shared/feedback.js";
+import { enableWindowDragging } from "./shared/window.js";
 
 const { invoke } = window.__TAURI__.core;
 const { getCurrentWindow } = window.__TAURI__.window;
@@ -7,15 +9,7 @@ const { listen } = window.__TAURI__.event;
 const appWindow = getCurrentWindow();
 
 // 顶栏（按钮除外）可拖动窗口
-function enableWindowDragging(header) {
-  if (!header) return;
-  header.addEventListener("mousedown", (event) => {
-    if (event.target.closest("button, input, textarea, a, select")) return;
-    event.preventDefault();
-    appWindow.startDragging();
-  });
-}
-enableWindowDragging(document.querySelector("[data-drag-region]"));
+enableWindowDragging(appWindow, document.querySelector("[data-drag-region]"));
 
 const els = {
   closeBtn: document.getElementById("close-btn"),
@@ -44,14 +38,7 @@ function markTheme(mode) {
   }
 }
 
-let statusTimer = null;
-function flashStatus(text, isError = false) {
-  els.status.textContent = text;
-  els.status.classList.toggle("error", isError);
-  els.status.classList.add("show");
-  clearTimeout(statusTimer);
-  statusTimer = setTimeout(() => els.status.classList.remove("show"), 1800);
-}
+const flashStatus = createFlashStatus(els.status, 1800);
 
 async function load() {
   let s;
