@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2a2a3d" />
+      <stop offset="1" stop-color="#16161f" />
+    </linearGradient>
+    <linearGradient id="spark" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#a6c8ff" />
+      <stop offset="1" stop-color="#6f9ff0" />
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="1024" height="1024" rx="224" fill="url(#bg)" />
+  <!-- 主火花：四角星，圆角收束到中心 -->
+  <path
+    d="M 500 196 Q 500 512 816 512 Q 500 512 500 828 Q 500 512 184 512 Q 500 512 500 196 Z"
+    fill="url(#spark)"
+  />
+  <!-- 副火花：呼应原图标的黄色点缀 -->
+  <path
+    d="M 782 132 Q 782 270 920 270 Q 782 270 782 408 Q 782 270 644 270 Q 782 270 782 132 Z"
+    fill="#f9e2af"
+  />
+</svg>
