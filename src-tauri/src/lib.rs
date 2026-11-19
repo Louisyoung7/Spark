@@ -123,6 +123,8 @@ pub fn run() {
             notes::edit_note,
             notes::delete_note,
             notes::save_image,
+            notes::export_notes,
+            notes::import_notes,
             settings::get_settings,
             settings::set_autostart,
             settings::pick_notes_path,

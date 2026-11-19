@@ -24,6 +24,8 @@ const els = {
   notesPath: document.getElementById("notes-path"),
   pickPathBtn: document.getElementById("pick-path-btn"),
   resetPathBtn: document.getElementById("reset-path-btn"),
+  exportNotesBtn: document.getElementById("export-notes-btn"),
+  importNotesBtn: document.getElementById("import-notes-btn"),
   hotkeyMain: document.getElementById("hotkey-main"),
   hotkeyHistory: document.getElementById("hotkey-history"),
   hotkeyMainDefault: document.getElementById("hotkey-main-default"),
@@ -151,6 +153,40 @@ els.resetPathBtn.addEventListener("click", async () => {
     flashStatus("已重置为默认位置");
   } catch (err) {
     flashStatus(`重置失败：${err}`, true);
+  }
+});
+
+// ===== 数据备份 =====
+function setBackupBusy(busy) {
+  els.exportNotesBtn.disabled = busy;
+  els.importNotesBtn.disabled = busy;
+}
+
+els.exportNotesBtn.addEventListener("click", async () => {
+  setBackupBusy(true);
+  try {
+    const path = await invoke("export_notes");
+    if (path) flashStatus(`已备份到 ${path}`);
+  } catch (err) {
+    flashStatus(`导出失败：${err}`, true);
+  } finally {
+    setBackupBusy(false);
+  }
+});
+
+els.importNotesBtn.addEventListener("click", async () => {
+  setBackupBusy(true);
+  try {
+    const result = await invoke("import_notes");
+    if (result) {
+      flashStatus(
+        `已导入 ${result.imported} 条，跳过 ${result.skipped} 条，重复 ${result.duplicates} 条`,
+      );
+    }
+  } catch (err) {
+    flashStatus(`导入失败：${err}`, true);
+  } finally {
+    setBackupBusy(false);
   }
 });
 
