@@ -6,6 +6,7 @@
 //! ```text
 //! config ──> paths ──> settings ──> notes
 //!                          └──────> hotkeys ──> tray
+//!                          └──────> update ────┘
 //!              config ──> windows ──────┘
 //! ```
 
@@ -15,6 +16,7 @@ mod notes;
 mod paths;
 mod settings;
 mod tray;
+mod update;
 mod windows;
 
 use std::sync::Mutex;
@@ -55,6 +57,8 @@ pub fn run() {
         .plugin(tauri_plugin_desktop_integration::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_xdg_portal::init())
+        // 版本更新：用系统默认浏览器打开 Release 页面
+        .plugin(tauri_plugin_opener::init())
         // 开机自启：Linux 写 ~/.config/autostart/spark.desktop
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
@@ -65,12 +69,17 @@ pub fn run() {
             app.manage(LastShownAt::default());
             app.manage(Resizing::default());
             app.manage(Capturing::default());
+            app.manage(update::UpdateState::default());
             app.manage(SettingsState(Mutex::new(settings::load_settings(
                 app.handle(),
             ))));
 
             #[cfg(desktop)]
             tray::setup(app.handle())?;
+
+            // 启动时先按缓存恢复托盘提示，再后台静默检查一次（24 小时节流）
+            update::apply_cached_badge(app.handle());
+            update::spawn_startup_check(app.handle().clone());
 
             init_main_window(app);
 
@@ -135,7 +144,10 @@ pub fn run() {
             hotkeys::end_hotkey_capture,
             windows::open_settings,
             windows::begin_resize,
-            windows::end_resize
+            windows::end_resize,
+            update::get_update_status,
+            update::check_update,
+            update::open_release_page
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| {

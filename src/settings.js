@@ -28,6 +28,13 @@ const els = {
   hotkeyHistoryCurrent: document.getElementById("hotkey-history-current"),
   resetHotkeysBtn: document.getElementById("reset-hotkeys-btn"),
   themeSegments: Array.from(document.querySelectorAll(".theme-segment")),
+  appVersion: document.getElementById("app-version"),
+  checkUpdateBtn: document.getElementById("check-update-btn"),
+  updateResult: document.getElementById("update-result"),
+  updateTitle: document.getElementById("update-title"),
+  updateNotes: document.getElementById("update-notes"),
+  updateActions: document.getElementById("update-actions"),
+  downloadUpdateBtn: document.getElementById("download-update-btn"),
   status: document.getElementById("settings-status"),
 };
 
@@ -39,6 +46,65 @@ function markTheme(mode) {
 }
 
 const flashStatus = createFlashStatus(els.status, 1800);
+
+// ===== 版本更新 =====
+let currentUpdate = null;
+let checkingUpdate = false;
+
+// info 为 null 表示还未检查过；有更新时展示说明摘要与下载入口
+function renderUpdate(info) {
+  currentUpdate = info || null;
+  if (!currentUpdate) {
+    els.updateResult.classList.add("hidden");
+    return;
+  }
+  els.updateResult.classList.remove("hidden");
+  if (currentUpdate.has_update) {
+    els.updateTitle.textContent = `发现新版本 v${currentUpdate.latest}`;
+    els.updateNotes.textContent = currentUpdate.notes || "该版本没有更新说明。";
+    els.updateNotes.classList.remove("hidden");
+    els.updateActions.classList.remove("hidden");
+    els.downloadUpdateBtn.classList.remove("hidden");
+  } else {
+    els.updateTitle.textContent = "已是最新版本";
+    els.updateNotes.textContent = "";
+    els.updateNotes.classList.add("hidden");
+    els.updateActions.classList.add("hidden");
+  }
+}
+
+async function checkForUpdate() {
+  if (checkingUpdate) return;
+  checkingUpdate = true;
+  els.checkUpdateBtn.disabled = true;
+  els.checkUpdateBtn.textContent = "检查中…";
+  try {
+    const info = await invoke("check_update", { force: true });
+    renderUpdate(info);
+    flashStatus(info && info.has_update ? `发现新版本 v${info.latest}` : "已是最新版本");
+  } catch (err) {
+    flashStatus(`${err}`, true);
+  } finally {
+    checkingUpdate = false;
+    els.checkUpdateBtn.disabled = false;
+    els.checkUpdateBtn.textContent = "检查更新";
+  }
+}
+
+els.checkUpdateBtn.addEventListener("click", checkForUpdate);
+
+els.downloadUpdateBtn.addEventListener("click", async () => {
+  if (!currentUpdate) return;
+  try {
+    await invoke("open_release_page", { url: currentUpdate.release_url });
+  } catch (err) {
+    flashStatus(`打开下载页失败：${err}`, true);
+  }
+});
+
+// 托盘「检查更新」触发同一套手动检查流程
+listen("check-update", checkForUpdate);
+listen("update-status", (event) => renderUpdate(event.payload));
 
 async function load() {
   let s;
@@ -75,6 +141,15 @@ async function load() {
   els.hotkeyHistoryDefault.textContent = s.hotkey_history_default;
   els.hotkeyMainCurrent.textContent = s.hotkey_main;
   els.hotkeyHistoryCurrent.textContent = s.hotkey_history;
+
+  // —— 关于 ——
+  els.appVersion.textContent = `当前版本 ${s.app_version}`;
+  try {
+    // 打开设置页时立即渲染缓存结果，避免依赖事件时序
+    renderUpdate(await invoke("get_update_status"));
+  } catch {
+    renderUpdate(null);
+  }
 }
 
 listen("reload-settings", load);

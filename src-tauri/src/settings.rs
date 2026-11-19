@@ -27,6 +27,15 @@ pub struct AppSettings {
     /// 主题：None 表示跟随系统；持久化取值 "light" / "dark"
     #[serde(default)]
     pub theme: Option<String>,
+    /// 上次检查更新的 epoch 秒（用于 24 小时节流）
+    #[serde(default)]
+    pub last_update_check: Option<i64>,
+    /// 最近一次检查到的最新版本号（不带 v 前缀）
+    #[serde(default)]
+    pub latest_version: Option<String>,
+    /// 最近一次检查到的更新说明摘要
+    #[serde(default)]
+    pub latest_update_notes: Option<String>,
 }
 
 /// 全局共享的设置状态。启动时一次性从磁盘加载，写入时持久化。
@@ -132,6 +141,8 @@ pub struct SettingsView {
     pub hotkey_history_custom: Option<String>,
     /// 当前主题模式：light / dark / system
     pub theme: String,
+    /// 当前应用版本，用于设置页「关于」展示
+    pub app_version: String,
 }
 
 /// 把存储值归一为前端可用的主题模式，非法值一律按跟随系统处理
@@ -168,6 +179,7 @@ pub fn get_settings(app: AppHandle) -> Result<SettingsView, String> {
         hotkey_history_default: HOTKEY_HISTORY.to_string(),
         hotkey_history_custom: s.hotkey_history.clone(),
         theme: normalize_theme(s.theme.as_deref()).to_string(),
+        app_version: app.package_info().version.to_string(),
     })
 }
 

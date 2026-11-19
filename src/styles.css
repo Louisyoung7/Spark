@@ -1033,6 +1033,31 @@ body {
   padding: 6px 0 10px;
 }
 
+.settings-update {
+  padding: 10px 0 4px;
+}
+
+.settings-update-title {
+  margin-bottom: 6px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.settings-update-notes {
+  max-height: 140px;
+  overflow-y: auto;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
 .hotkey-input {
   cursor: pointer;
   text-align: center;
