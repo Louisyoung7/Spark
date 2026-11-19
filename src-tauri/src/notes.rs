@@ -3,13 +3,14 @@
 //! 数据以 JSON Lines 形式保存在当前笔记文件（默认 `~/.local/share/spark/notes.jsonl`，
 //! 可在设置中自定义）。换行由 serde_json 转义，每条记录始终占一个物理行。
 
+use std::collections::HashSet;
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::settings;
 
@@ -30,6 +31,21 @@ pub struct NoteEntry {
     pub line: usize,
     pub time: String,
     pub content: String,
+}
+
+/// 备份文件中的一条记录，仅保留存储所需的两个字段
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
+struct NoteRecord {
+    time: String,
+    content: String,
+}
+
+/// 导入结果统计
+#[derive(serde::Serialize, Debug, Default, PartialEq, Eq)]
+pub struct ImportResult {
+    pub imported: usize,
+    pub skipped: usize,
+    pub duplicates: usize,
 }
 
 /// 按物理行读取文件。列表、编辑、删除都必须基于同一套行号，
@@ -233,6 +249,137 @@ pub fn delete_note(app: AppHandle, line: usize, expected_time: String) -> Result
     Ok(())
 }
 
+/// 解析备份文件中的一行；空行、非法 JSON、缺字段或空内容都返回 None。
+fn parse_note_line(line: &str) -> Option<NoteRecord> {
+    let raw: NoteRecord = serde_json::from_str(line.trim()).ok()?;
+    let time = raw.time.trim().to_string();
+    let content = raw.content.trim().to_string();
+    if time.is_empty() || content.is_empty() {
+        return None;
+    }
+    Some(NoteRecord { time, content })
+}
+
+/// 把备份文本合并进已有行：已有行原样保留，新记录追加在末尾。
+/// 去重同时覆盖「与库内记录重复」和「备份文件内部重复」。
+fn merge_import(existing: &[String], imported_text: &str) -> (Vec<String>, ImportResult) {
+    let mut seen: HashSet<NoteRecord> = existing
+        .iter()
+        .filter_map(|line| parse_note_line(line))
+        .collect();
+
+    let mut result = ImportResult::default();
+    let mut merged = existing.to_vec();
+    for line in imported_text.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let Some(record) = parse_note_line(line) else {
+            result.skipped += 1;
+            continue;
+        };
+        if !seen.insert(record.clone()) {
+            result.duplicates += 1;
+            continue;
+        }
+        merged.push(serde_json::to_string(&record).unwrap_or_default());
+        result.imported += 1;
+    }
+    (merged, result)
+}
+
+/// 导出当前笔记文件到用户选择的位置，返回目标路径；用户取消时返回 None。
+#[tauri::command]
+pub async fn export_notes(app: AppHandle) -> Result<Option<String>, String> {
+    let path = settings::notes_path(&app)?;
+    if !path.exists() {
+        return Err("暂无可导出的笔记".into());
+    }
+
+    let start_dir = app
+        .path()
+        .download_dir()
+        .or_else(|_| app.path().home_dir())
+        .ok();
+    let default_name = format!(
+        "spark-notes-{}.jsonl",
+        chrono::Local::now().format("%Y%m%d")
+    );
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut dlg = rfd::FileDialog::new()
+            .set_title("导出笔记备份")
+            .set_file_name(&default_name)
+            .add_filter("JSON Lines", &["jsonl"])
+            .add_filter("JSON", &["json"]);
+        if let Some(dir) = start_dir {
+            dlg = dlg.set_directory(dir);
+        }
+        let Some(dest) = dlg.save_file() else {
+            return Ok::<_, String>(None);
+        };
+        // 目标就是源文件时拒绝，否则 fs::copy 会先截断源文件
+        if dest == path
+            || (dest.exists() && fs::canonicalize(&dest).ok() == fs::canonicalize(&path).ok())
+        {
+            return Err("不能覆盖正在使用的笔记文件".into());
+        }
+
+        let _guard = lock_notes();
+        fs::copy(&path, &dest).map_err(|e| format!("写入备份失败: {e}"))?;
+        Ok(Some(dest.to_string_lossy().to_string()))
+    })
+    .await
+    .map_err(|e| format!("导出失败: {e}"))?
+}
+
+/// 从用户选择的 JSONL 备份合并导入笔记，返回统计；用户取消时返回 None。
+#[tauri::command]
+pub async fn import_notes(app: AppHandle) -> Result<Option<ImportResult>, String> {
+    let path = settings::notes_path(&app)?;
+    let start_dir = app
+        .path()
+        .download_dir()
+        .or_else(|_| app.path().home_dir())
+        .ok();
+
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let mut dlg = rfd::FileDialog::new()
+            .set_title("导入笔记备份")
+            .add_filter("JSON Lines", &["jsonl"])
+            .add_filter("JSON", &["json"]);
+        if let Some(dir) = start_dir {
+            dlg = dlg.set_directory(dir);
+        }
+        let Some(src) = dlg.pick_file() else {
+            return Ok::<_, String>(None);
+        };
+        let text = fs::read_to_string(&src).map_err(|e| format!("读取备份失败: {e}"))?;
+
+        let _guard = lock_notes();
+        let existing = if path.exists() {
+            read_lines(&path)?
+        } else {
+            Vec::new()
+        };
+        let (lines, result) = merge_import(&existing, &text);
+        if result.imported > 0 {
+            if let Some(dir) = path.parent() {
+                fs::create_dir_all(dir).map_err(|e| format!("创建目录失败: {e}"))?;
+            }
+            write_lines_atomic(&path, &lines)?;
+        }
+        Ok(Some(result))
+    })
+    .await
+    .map_err(|e| format!("导入失败: {e}"))??;
+
+    if result.as_ref().is_some_and(|r| r.imported > 0) {
+        let _ = app.emit("reload-history", ());
+    }
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -307,5 +454,82 @@ mod tests {
         let path = dir.path().join("notes.jsonl");
         fs::write(&path, format!("{}\n\n{}\n", entry("t1"), entry("t2"))).unwrap();
         assert_eq!(read_lines(&path).unwrap().len(), 3);
+    }
+
+    fn record(time: &str, content: &str) -> String {
+        serde_json::json!({ "time": time, "content": content }).to_string()
+    }
+
+    #[test]
+    fn parse_note_line_accepts_valid_record() {
+        let parsed = parse_note_line(&record("t1", "内容")).unwrap();
+        assert_eq!(parsed.time, "t1");
+        assert_eq!(parsed.content, "内容");
+    }
+
+    #[test]
+    fn parse_note_line_rejects_invalid_records() {
+        assert!(parse_note_line("").is_none());
+        assert!(parse_note_line("not json").is_none());
+        assert!(parse_note_line(r#"{"content":"内容"}"#).is_none());
+        assert!(parse_note_line(r#"{"time":"t1"}"#).is_none());
+        assert!(parse_note_line(r#"{"time":"t1","content":123}"#).is_none());
+        assert!(parse_note_line(r#"{"time":"t1","content":"  "}"#).is_none());
+        assert!(parse_note_line(r#"{"time":" ","content":"内容"}"#).is_none());
+    }
+
+    #[test]
+    fn merge_import_appends_into_empty_file() {
+        let text = format!("{}\n{}", record("t1", "a"), record("t2", "b"));
+        let (lines, result) = merge_import(&[], &text);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(
+            result,
+            ImportResult {
+                imported: 2,
+                skipped: 0,
+                duplicates: 0
+            }
+        );
+    }
+
+    #[test]
+    fn merge_import_skips_records_already_present() {
+        let existing = vec![record("t1", "a")];
+        let (lines, result) = merge_import(&existing, &record("t1", "a"));
+        assert_eq!(lines, existing);
+        assert_eq!(result.imported, 0);
+        assert_eq!(result.duplicates, 1);
+    }
+
+    #[test]
+    fn merge_import_dedupes_within_backup_file() {
+        let text = format!("{}\n{}", record("t1", "a"), record("t1", "a"));
+        let (lines, result) = merge_import(&[], &text);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(result.imported, 1);
+        assert_eq!(result.duplicates, 1);
+    }
+
+    #[test]
+    fn merge_import_counts_skipped_and_preserves_existing_lines() {
+        let existing = vec![record("t1", "a"), String::new(), "not json".to_string()];
+        let text = format!("\n{}\nbroken", record("t2", "b"));
+        let (lines, result) = merge_import(&existing, &text);
+
+        assert_eq!(&lines[..existing.len()], existing.as_slice());
+        assert_eq!(lines.len(), existing.len() + 1);
+        assert_eq!(result.imported, 1);
+        assert_eq!(result.skipped, 1);
+        assert_eq!(result.duplicates, 0);
+    }
+
+    #[test]
+    fn merge_import_accepts_crlf_input() {
+        let text = format!("{}\r\n{}\r\n", record("t1", "a"), record("t2", "b"));
+        let (lines, result) = merge_import(&[], &text);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(result.imported, 2);
+        assert_eq!(result.skipped, 0);
     }
 }
