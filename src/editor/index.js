@@ -4,7 +4,7 @@ import { indentUnit } from "@codemirror/language";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { markdown } from "@codemirror/lang-markdown";
 import { markdownView } from "./markdownView.js";
-import { indentDepth } from "../markdown/syntax.js";
+import { indentDepth, matchBullet, planEnter } from "../markdown/syntax.js";
 import { sparkTheme } from "./theme.js";
 
 export { EditorView };
@@ -58,8 +58,8 @@ export function indentSelection(view, dir) {
       ops.push({ from: base, to: base + ws.length, insert: next });
     } else {
       // 已无缩进：若是列表项则取消 marker（「- 」→ 普通文本）
-      const mm = rest.match(/^([-+*])(\s|$)/);
-      if (mm) ops.push({ from: base, to: base + mm[0].length, insert: "" });
+      const bullet = matchBullet(rest);
+      if (bullet) ops.push({ from: base, to: base + bullet.markerLength, insert: "" });
     }
     base += line.length + 1;
   }
@@ -84,47 +84,23 @@ export function enterWithIndent(view) {
   // 续行沿用本行原始缩进（不做归一化）：新行与当前行层级、视觉宽度都完全一致，
   // 「\t  」这类混合缩进也能正确识别为列表项。
   const [indent, rest] = splitIndent(full);
-  const bullet = rest.match(/^([-*+])(\s(.*))?$/);
-  const ordered = rest.match(/^(\d{1,9})([.)])(\s+)(.*)$/);
+  const plan = planEnter(rest);
 
-  if (bullet) {
-    const marker = bullet[1];
-    if (rest.trim() === marker) {
-      // 空列表项：删除 marker 及其后空白，退出当前列表层级
-      const from = line.from + indent.length;
-      view.dispatch({
-        changes: { from, to: line.to, insert: "" },
-        selection: { anchor: from },
-      });
-      view.focus();
-      return;
-    }
+  if (plan.kind === "exit") {
+    // 空列表项：删除整行内容（含标记），退出当前列表层级
+    const from = line.from + indent.length;
     view.dispatch({
-      changes: { from: sel.from, to: sel.to, insert: "\n" + indent + marker + " " },
-      selection: { anchor: sel.from + 1 + indent.length + 2 },
+      changes: { from, to: line.to, insert: "" },
+      selection: { anchor: from },
     });
     view.focus();
     return;
   }
 
-  if (ordered) {
-    const number = Number(ordered[1]);
-    const delim = ordered[2];
-    const content = ordered[4] || "";
-    if (content.trim() === "") {
-      // 空的有序列表项：同样退出列表层级
-      const from = line.from + indent.length;
-      view.dispatch({
-        changes: { from, to: line.to, insert: "" },
-        selection: { anchor: from },
-      });
-      view.focus();
-      return;
-    }
-    const next = `${number + 1}${delim} `;
+  if (plan.kind === "continue") {
     view.dispatch({
-      changes: { from: sel.from, to: sel.to, insert: "\n" + indent + next },
-      selection: { anchor: sel.from + 1 + indent.length + next.length },
+      changes: { from: sel.from, to: sel.to, insert: "\n" + indent + plan.prefix },
+      selection: { anchor: sel.from + 1 + indent.length + plan.prefix.length },
     });
     view.focus();
     return;
