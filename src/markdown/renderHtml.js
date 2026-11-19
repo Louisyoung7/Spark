@@ -5,8 +5,9 @@ import { BULLET_RE, ORDERED_RE, indentDepth } from "./syntax.js";
 // 所有文本都经过 escapeHtml，只拼接固定的标签。
 
 export function escapeHtml(s) {
-  return s.replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]
+  return s.replace(
+    /[&<>"']/g,
+    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c],
   );
 }
 

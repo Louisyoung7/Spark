@@ -1,13 +1,10 @@
-import {
-  createEditor,
-  indentSelection,
-  enterWithIndent,
-  EditorView,
-  setEditorTheme,
-} from "./editor/index.js";
+import { createEditor, EditorView, setEditorTheme } from "./editor/index.js";
 import { escapeHtml, renderOutline } from "./markdown/renderHtml.js";
 import { BULLET_RE, ORDERED_RE, indentDepth } from "./markdown/syntax.js";
 import { initTheme } from "./theme.js";
+import { listKeyCommands, saveCommands } from "./shared/editorCommands.js";
+import { LAST_SAVED_KEY } from "./shared/keys.js";
+import { enableWindowDragging } from "./shared/window.js";
 
 const { invoke } = window.__TAURI__.core;
 const { getCurrentWindow } = window.__TAURI__.window;
@@ -16,15 +13,7 @@ const { listen } = window.__TAURI__.event;
 const appWindow = getCurrentWindow();
 
 // 顶栏（按钮除外）可拖动窗口
-function enableWindowDragging(header) {
-  if (!header) return;
-  header.addEventListener("mousedown", (event) => {
-    if (event.target.closest("button, input, textarea, a, select")) return;
-    event.preventDefault();
-    appWindow.startDragging();
-  });
-}
-enableWindowDragging(document.querySelector("[data-drag-region]"));
+enableWindowDragging(appWindow, document.querySelector("[data-drag-region]"));
 const listEl = document.getElementById("note-list");
 const countEl = document.getElementById("count");
 const emptyEl = document.getElementById("empty");
@@ -107,7 +96,6 @@ const ICON_EDIT = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" st
 const ICON_DELETE = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 4.5h11"/><path d="M6.5 4.5V3a.5.5 0 0 1 .5-.5h2a.5.5 0 0 1 .5.5v1.5"/><path d="M4 4.5l.6 8a1 1 0 0 0 1 .9h4.8a1 1 0 0 0 1-.9l.6-8"/><path d="M6.5 7v4M9.5 7v4"/></svg>`;
 const ICON_CHECK = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.5L6.5 11.5L12.5 4.5"/></svg>`;
 
-const LAST_SAVED_KEY = "spark:last-saved-at";
 const HIGHLIGHT_MS = 1600;
 let highlightTimer = null;
 
@@ -548,11 +536,7 @@ function drawExportImage(notes) {
   ctx.font = `12px ${family}`;
   ctx.fillStyle = colors.muted;
   ctx.textAlign = "right";
-  ctx.fillText(
-    `${RANGE_LABELS[activeRange]} · ${notes.length} 条`,
-    EXPORT_W - EXPORT_PAD,
-    y + 12
-  );
+  ctx.fillText(`${RANGE_LABELS[activeRange]} · ${notes.length} 条`, EXPORT_W - EXPORT_PAD, y + 12);
   ctx.textAlign = "left";
   y += 24 + 20;
 
@@ -676,26 +660,8 @@ editEditor = createEditor({
   placeholder: "记点什么…",
   onDocChange: () => updateEditCount(),
   commands: {
-    Tab: (v) => {
-      indentSelection(v, 1);
-      return true;
-    },
-    "Shift-Tab": (v) => {
-      indentSelection(v, -1);
-      return true;
-    },
-    Enter: (v) => {
-      enterWithIndent(v);
-      return true;
-    },
-    "Ctrl-Enter": () => {
-      saveEdit();
-      return true;
-    },
-    "Mod-Enter": () => {
-      saveEdit();
-      return true;
-    },
+    ...listKeyCommands,
+    ...saveCommands(saveEdit),
   },
   extensions: [
     EditorView.domEventHandlers({

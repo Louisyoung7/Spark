@@ -1,4 +1,4 @@
-import { Decoration, EditorView, ViewPlugin, WidgetType } from "@codemirror/view";
+import { Decoration, ViewPlugin, WidgetType } from "@codemirror/view";
 import { RangeSetBuilder } from "@codemirror/state";
 
 import { BULLET_RE, ORDERED_RE } from "../markdown/syntax.js";
@@ -61,11 +61,7 @@ function computeDecorations(view) {
       const markerStart = line.from + indent.length;
       const replaceEnd = markerStart + 1 + bullet[3].length;
       builder.add(line.from, line.from, listLine(indentEm(indent) + EM_BULLET));
-      builder.add(
-        markerStart,
-        replaceEnd,
-        Decoration.replace({ widget: new BulletWidget() })
-      );
+      builder.add(markerStart, replaceEnd, Decoration.replace({ widget: new BulletWidget() }));
       continue;
     }
 
@@ -101,6 +97,6 @@ export function markdownView() {
     },
     {
       decorations: (v) => v.decorations,
-    }
+    },
   );
 }
