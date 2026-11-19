@@ -36,6 +36,9 @@ pub struct AppSettings {
     /// 最近一次检查到的更新说明摘要
     #[serde(default)]
     pub latest_update_notes: Option<String>,
+    /// 更新检查使用的代理地址；None 表示只读取环境变量
+    #[serde(default)]
+    pub proxy: Option<String>,
 }
 
 /// 全局共享的设置状态。启动时一次性从磁盘加载，写入时持久化。
@@ -143,6 +146,8 @@ pub struct SettingsView {
     pub theme: String,
     /// 当前应用版本，用于设置页「关于」展示
     pub app_version: String,
+    /// 更新检查代理，空串表示未设置
+    pub proxy: String,
 }
 
 /// 把存储值归一为前端可用的主题模式，非法值一律按跟随系统处理
@@ -180,6 +185,7 @@ pub fn get_settings(app: AppHandle) -> Result<SettingsView, String> {
         hotkey_history_custom: s.hotkey_history.clone(),
         theme: normalize_theme(s.theme.as_deref()).to_string(),
         app_version: app.package_info().version.to_string(),
+        proxy: s.proxy.clone().unwrap_or_default(),
     })
 }
 
@@ -249,6 +255,23 @@ pub fn set_notes_path(app: AppHandle, path: Option<String>) -> Result<(), String
     Ok(())
 }
 
+/// 去掉首尾空白，空串归一为 None（表示恢复为只读环境变量）
+fn normalize_proxy(raw: Option<String>) -> Option<String> {
+    raw.map(|p| p.trim().to_string()).filter(|p| !p.is_empty())
+}
+
+/// 设置更新检查代理；非法地址直接拒绝，避免保存后才在检查时失败。
+#[tauri::command]
+pub fn set_proxy(app: AppHandle, proxy: Option<String>) -> Result<(), String> {
+    let normalized = normalize_proxy(proxy);
+    if let Some(url) = &normalized {
+        ureq::Proxy::new(url)
+            .map_err(|_| "代理地址无效，示例：http://127.0.0.1:7890".to_string())?;
+    }
+    update(&app, |g| g.proxy = normalized)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -283,5 +306,15 @@ mod tests {
         .unwrap();
 
         assert_eq!(current.theme.as_deref(), Some("dark"));
+    }
+
+    #[test]
+    fn normalize_proxy_trims_and_drops_empty() {
+        assert_eq!(
+            normalize_proxy(Some("  http://127.0.0.1:7890  ".to_string())),
+            Some("http://127.0.0.1:7890".to_string())
+        );
+        assert_eq!(normalize_proxy(Some("   ".to_string())), None);
+        assert_eq!(normalize_proxy(None), None);
     }
 }

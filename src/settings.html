@@ -89,11 +89,33 @@
             <button id="check-update-btn" class="settings-btn">检查更新</button>
           </div>
 
+          <div class="settings-row settings-row-stack">
+            <div class="settings-label">
+              <div>更新检查代理</div>
+              <div class="settings-sub">
+                留空则读取 ALL_PROXY / HTTPS_PROXY；支持 http:// 与 socks5h://
+              </div>
+            </div>
+            <div class="settings-path">
+              <input
+                id="proxy-input"
+                class="settings-input proxy-input"
+                placeholder="http://127.0.0.1:7890"
+                autocomplete="off"
+                spellcheck="false"
+              />
+              <button id="save-proxy-btn" class="settings-btn">保存</button>
+            </div>
+          </div>
+
           <div id="update-result" class="settings-update hidden">
             <div class="settings-update-title" id="update-title"></div>
             <div class="settings-update-notes" id="update-notes"></div>
             <div class="settings-actions" id="update-actions">
               <button id="download-update-btn" class="settings-btn">下载新版</button>
+              <button id="open-release-btn" class="settings-btn settings-btn-ghost hidden">
+                打开发布页
+              </button>
             </div>
           </div>
         </section>

@@ -138,13 +138,17 @@ fn now_epoch() -> i64 {
 
 // ---------- 网络 ----------
 
-/// 同步请求 GitHub 最新 Release（在 blocking 线程中调用）
-fn fetch_latest(current: &str) -> Result<Option<UpdateInfo>, String> {
-    let agent: ureq::Agent = ureq::Agent::config_builder()
+/// 同步请求 GitHub 最新 Release（在 blocking 线程中调用）。
+/// `proxy` 为空时保留 ureq 默认行为：读取 ALL_PROXY / HTTPS_PROXY 环境变量。
+fn fetch_latest(current: &str, proxy: Option<&str>) -> Result<Option<UpdateInfo>, String> {
+    let mut builder = ureq::Agent::config_builder()
         .timeout_global(Some(REQUEST_TIMEOUT))
-        .user_agent(format!("Spark/{current}"))
-        .build()
-        .into();
+        .user_agent(format!("Spark/{current}"));
+    if let Some(url) = proxy {
+        let parsed = ureq::Proxy::new(url).map_err(|_| "代理地址无效".to_string())?;
+        builder = builder.proxy(Some(parsed));
+    }
+    let agent: ureq::Agent = builder.build().into();
 
     let mut response = match agent
         .get(RELEASES_API)
@@ -233,8 +237,12 @@ async fn check_update_inner(app: AppHandle, force: bool) -> Result<Option<Update
     }
 
     let current_for_request = current.clone();
-    let joined =
-        tauri::async_runtime::spawn_blocking(move || fetch_latest(&current_for_request)).await;
+    // 显式配置的代理优先；未配置时 fetch_latest 读取环境变量
+    let proxy = settings::snapshot(&app).proxy;
+    let joined = tauri::async_runtime::spawn_blocking(move || {
+        fetch_latest(&current_for_request, proxy.as_deref())
+    })
+    .await;
     let checked = match joined {
         Ok(result) => result,
         Err(e) => Err(format!("检查更新失败: {e}")),

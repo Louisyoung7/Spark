@@ -35,6 +35,9 @@ const els = {
   updateNotes: document.getElementById("update-notes"),
   updateActions: document.getElementById("update-actions"),
   downloadUpdateBtn: document.getElementById("download-update-btn"),
+  openReleaseBtn: document.getElementById("open-release-btn"),
+  proxyInput: document.getElementById("proxy-input"),
+  saveProxyBtn: document.getElementById("save-proxy-btn"),
   status: document.getElementById("settings-status"),
 };
 
@@ -48,6 +51,7 @@ function markTheme(mode) {
 const flashStatus = createFlashStatus(els.status, 1800);
 
 // ===== 版本更新 =====
+const RELEASE_PAGE = "https://github.com/Louisyoung7/Spark/releases/latest";
 let currentUpdate = null;
 let checkingUpdate = false;
 
@@ -59,6 +63,7 @@ function renderUpdate(info) {
     return;
   }
   els.updateResult.classList.remove("hidden");
+  els.openReleaseBtn.classList.add("hidden");
   if (currentUpdate.has_update) {
     els.updateTitle.textContent = `发现新版本 v${currentUpdate.latest}`;
     els.updateNotes.textContent = currentUpdate.notes || "该版本没有更新说明。";
@@ -73,6 +78,26 @@ function renderUpdate(info) {
   }
 }
 
+// 检查失败时仍给出口：交给浏览器走系统代理打开发布页
+function renderUpdateError(message) {
+  currentUpdate = null;
+  els.updateResult.classList.remove("hidden");
+  els.updateTitle.textContent = "检查更新失败";
+  els.updateNotes.textContent = message || "无法获取更新信息。";
+  els.updateNotes.classList.remove("hidden");
+  els.updateActions.classList.remove("hidden");
+  els.downloadUpdateBtn.classList.add("hidden");
+  els.openReleaseBtn.classList.remove("hidden");
+}
+
+async function openReleasePage(url) {
+  try {
+    await invoke("open_release_page", { url });
+  } catch (err) {
+    flashStatus(`打开下载页失败：${err}`, true);
+  }
+}
+
 async function checkForUpdate() {
   if (checkingUpdate) return;
   checkingUpdate = true;
@@ -83,7 +108,7 @@ async function checkForUpdate() {
     renderUpdate(info);
     flashStatus(info && info.has_update ? `发现新版本 v${info.latest}` : "已是最新版本");
   } catch (err) {
-    flashStatus(`${err}`, true);
+    renderUpdateError(`${err}`);
   } finally {
     checkingUpdate = false;
     els.checkUpdateBtn.disabled = false;
@@ -93,12 +118,22 @@ async function checkForUpdate() {
 
 els.checkUpdateBtn.addEventListener("click", checkForUpdate);
 
-els.downloadUpdateBtn.addEventListener("click", async () => {
-  if (!currentUpdate) return;
+els.downloadUpdateBtn.addEventListener("click", () => {
+  if (currentUpdate) openReleasePage(currentUpdate.release_url);
+});
+
+els.openReleaseBtn.addEventListener("click", () => openReleasePage(RELEASE_PAGE));
+
+els.saveProxyBtn.addEventListener("click", async () => {
+  const value = els.proxyInput.value.trim();
+  els.saveProxyBtn.disabled = true;
   try {
-    await invoke("open_release_page", { url: currentUpdate.release_url });
+    await invoke("set_proxy", { proxy: value || null });
+    flashStatus(value ? "代理已保存" : "已恢复为读取环境变量");
   } catch (err) {
-    flashStatus(`打开下载页失败：${err}`, true);
+    flashStatus(`${err}`, true);
+  } finally {
+    els.saveProxyBtn.disabled = false;
   }
 });
 
@@ -144,6 +179,10 @@ async function load() {
 
   // —— 关于 ——
   els.appVersion.textContent = `当前版本 ${s.app_version}`;
+  // 避免窗口重新获得焦点时覆盖用户正在编辑的代理输入
+  if (document.activeElement !== els.proxyInput) {
+    els.proxyInput.value = s.proxy || "";
+  }
   try {
     // 打开设置页时立即渲染缓存结果，避免依赖事件时序
     renderUpdate(await invoke("get_update_status"));

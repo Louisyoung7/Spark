@@ -139,6 +139,7 @@ pub fn run() {
             settings::pick_notes_path,
             settings::set_notes_path,
             settings::set_theme,
+            settings::set_proxy,
             hotkeys::set_hotkeys,
             hotkeys::begin_hotkey_capture,
             hotkeys::end_hotkey_capture,
