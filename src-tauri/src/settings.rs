@@ -78,15 +78,29 @@ pub fn snapshot(app: &AppHandle) -> AppSettings {
         .unwrap_or_default()
 }
 
-/// 修改并持久化设置，返回修改后的快照
+/// 先落盘、成功后再替换内存值。
+///
+/// 写盘失败时内存保持旧值，避免「界面显示已生效、重启后又回退」的不一致。
+fn save_then_commit<S>(
+    current: &mut S,
+    next: S,
+    save: impl FnOnce(&S) -> Result<(), String>,
+) -> Result<(), String> {
+    save(&next)?;
+    *current = next;
+    Ok(())
+}
+
+/// 修改并持久化设置，返回修改后的快照。
 pub fn update<F>(app: &AppHandle, mutate: F) -> Result<AppSettings, String>
 where
     F: FnOnce(&mut AppSettings),
 {
     let state = app.state::<SettingsState>();
     let mut g = state.0.lock().map_err(|e| format!("锁定设置失败: {e}"))?;
-    mutate(&mut g);
-    save_settings(app, &g)?;
+    let mut next = g.clone();
+    mutate(&mut next);
+    save_then_commit(&mut *g, next, |s| save_settings(app, s))?;
     Ok(g.clone())
 }
 
@@ -221,4 +235,41 @@ pub fn set_notes_path(app: AppHandle, path: Option<String>) -> Result<(), String
     let new_path = path.map(PathBuf::from);
     update(&app, |g| g.notes_path = new_path)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn settings_with_theme(theme: &str) -> AppSettings {
+        AppSettings {
+            theme: Some(theme.to_string()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn save_then_commit_keeps_old_value_when_save_fails() {
+        let mut current = settings_with_theme("light");
+
+        let result = save_then_commit(&mut current, settings_with_theme("dark"), |_| {
+            Err("磁盘已满".to_string())
+        });
+
+        assert!(result.is_err());
+        assert_eq!(current.theme.as_deref(), Some("light"));
+    }
+
+    #[test]
+    fn save_then_commit_applies_value_when_save_succeeds() {
+        let mut current = settings_with_theme("light");
+
+        save_then_commit(&mut current, settings_with_theme("dark"), |saved| {
+            assert_eq!(saved.theme.as_deref(), Some("dark"));
+            Ok(())
+        })
+        .unwrap();
+
+        assert_eq!(current.theme.as_deref(), Some("dark"));
+    }
 }

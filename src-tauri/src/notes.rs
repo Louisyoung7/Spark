@@ -114,6 +114,8 @@ pub fn save_note(app: AppHandle, content: String) -> Result<(), String> {
 #[tauri::command]
 pub fn list_notes(app: AppHandle) -> Result<Vec<NoteEntry>, String> {
     let path = settings::notes_path(&app)?;
+    // 与追加 / 替换写共用同一把锁，避免读到写到一半的文件
+    let _guard = lock_notes();
     if !path.exists() {
         return Ok(Vec::new());
     }
