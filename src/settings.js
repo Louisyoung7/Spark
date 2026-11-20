@@ -59,6 +59,13 @@ let currentUpdate = null;
 let checkingUpdate = false;
 // 下载 / 安装期间忽略重新渲染，避免窗口聚焦时把进度状态冲掉
 let updating = false;
+// 当前安装形态与授权能力，由后端检测
+let capability = { install_kind: "deb", requires_polkit: true, polkit_agent: true };
+
+// 没有 polkit 认证代理时 deb/rpm 无法弹授权框，只能引导手动下载
+function canInstallInApp() {
+  return !capability.requires_polkit || capability.polkit_agent;
+}
 
 function formatBytes(bytes) {
   if (!bytes) return "0 B";
@@ -86,11 +93,16 @@ function renderUpdate(info) {
   els.openReleaseBtn.classList.add("hidden");
   resetProgress();
   if (currentUpdate.has_update) {
+    const blocked = !canInstallInApp();
+    const notes = currentUpdate.notes || "该版本没有更新说明。";
     els.updateTitle.textContent = `发现新版本 v${currentUpdate.latest}`;
-    els.updateNotes.textContent = currentUpdate.notes || "该版本没有更新说明。";
+    els.updateNotes.textContent = blocked
+      ? `${notes}\n\n未检测到 polkit 认证代理，无法在应用内安装，请点击「打开发布页」手动下载。`
+      : notes;
     els.updateNotes.classList.remove("hidden");
     els.updateActions.classList.remove("hidden");
-    els.downloadUpdateBtn.classList.remove("hidden");
+    els.downloadUpdateBtn.classList.toggle("hidden", blocked);
+    els.openReleaseBtn.classList.toggle("hidden", !blocked);
   } else {
     els.updateTitle.textContent = "已是最新版本";
     els.updateNotes.textContent = "";
@@ -243,6 +255,12 @@ async function load() {
   // 避免窗口重新获得焦点时覆盖用户正在编辑的代理输入
   if (document.activeElement !== els.proxyInput) {
     els.proxyInput.value = s.proxy || "";
+  }
+  try {
+    // 每次打开设置页都重新检测，用户可能刚启动了认证代理
+    capability = await invoke("get_update_capability");
+  } catch {
+    // 检测失败时维持默认，避免误阻断
   }
   try {
     // 打开设置页时立即渲染缓存结果，避免依赖事件时序

@@ -204,6 +204,64 @@ fn command_succeeds(name: &str, args: &[&OsStr]) -> bool {
         .unwrap_or(false)
 }
 
+/// 常见桌面环境的 polkit 认证代理进程名
+const POLKIT_AGENT_NAMES: &[&str] = &[
+    "gnome-shell",
+    "polkit-gnome-authentication-agent-1",
+    "polkit-kde-authentication-agent-1",
+    "polkit-qt5-authentication-agent-1",
+    "polkit-qt6-authentication-agent-1",
+    "polkit-mate-authentication-agent-1",
+    "mate-polkit",
+    "xfce-polkit",
+    "lxpolkit",
+    "lxqt-policykit-agent",
+    "hyprpolkitagent",
+    "budgie-polkit-dialog",
+    "pantheon-polkit-agent",
+    "deepin-polkit-agent",
+    "ukui-polkit",
+    "cosmic-polkit-agent",
+    "phosh",
+];
+
+fn is_polkit_agent(exe_name: &str) -> bool {
+    POLKIT_AGENT_NAMES.contains(&exe_name)
+}
+
+/// 扫描 /proc 判断桌面会话里是否有 polkit 认证代理。
+///
+/// 没有代理时 pkexec 无法弹出授权框。读不到 /proc 时返回 true，
+/// 避免因权限限制误判把更新完全阻断。
+fn polkit_agent_running() -> bool {
+    let Ok(entries) = fs::read_dir("/proc") else {
+        return true;
+    };
+    for entry in entries.flatten() {
+        let is_pid = entry
+            .file_name()
+            .to_str()
+            .map(|name| !name.is_empty() && name.chars().all(|c| c.is_ascii_digit()))
+            .unwrap_or(false);
+        if !is_pid {
+            continue;
+        }
+        // cmdline 比 comm 更完整（comm 会被截断到 15 个字符）
+        let Ok(cmdline) = fs::read(entry.path().join("cmdline")) else {
+            continue;
+        };
+        if cmdline.is_empty() {
+            continue; // 内核线程没有 cmdline
+        }
+        let first = cmdline.split(|b| *b == 0).next().unwrap_or_default();
+        let exe = String::from_utf8_lossy(first);
+        if is_polkit_agent(exe.rsplit('/').next().unwrap_or("")) {
+            return true;
+        }
+    }
+    false
+}
+
 /// 解析 GitHub 响应；标签无法识别时返回 Ok(None)，视为「没有可用更新」
 fn parse_release_json(
     json: &str,
@@ -409,14 +467,22 @@ fn run_privileged(program: &str, args: &[&OsStr]) -> Result<(), String> {
         return Ok(());
     }
 
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // 没有认证代理时 pkexec 会直接失败，转成可操作的提示
+    if stderr
+        .to_ascii_lowercase()
+        .contains("no authentication agent")
+    {
+        return Err("未检测到 polkit 认证代理，请从发布页手动下载安装".to_string());
+    }
+
     match output.status.code() {
         // polkit：用户取消 / 未获得授权
         Some(126) => return Err("已取消系统授权，安装未执行".to_string()),
-        Some(127) => return Err("未获得安装授权，请重试".to_string()),
+        Some(127) => return Err("未获得安装授权，请检查 polkit 认证代理后重试".to_string()),
         _ => {}
     }
 
-    let stderr = String::from_utf8_lossy(&output.stderr);
     let lines: Vec<&str> = stderr.lines().filter(|l| !l.trim().is_empty()).collect();
     let detail = lines[lines.len().saturating_sub(3)..].join(" ");
     if detail.is_empty() {
@@ -518,6 +584,11 @@ async fn run_download_and_install(app: &AppHandle) -> Result<(), String> {
     let current = app.package_info().version.to_string();
     let proxy = settings::snapshot(app).proxy;
     let kind = detect_install_kind();
+
+    // deb/rpm 依赖 pkexec 弹授权框，没有代理就不必白下载
+    if kind != InstallKind::AppImage && !polkit_agent_running() {
+        return Err("未检测到 polkit 认证代理，无法在应用内安装，请从发布页手动下载".to_string());
+    }
 
     let cached = {
         let state = app.state::<UpdateState>();
@@ -639,6 +710,31 @@ fn cached_info(app: &AppHandle, current: &str) -> Option<UpdateInfo> {
 pub fn get_update_status(app: AppHandle) -> Option<UpdateInfo> {
     let current = app.package_info().version.to_string();
     cached_info(&app, &current)
+}
+
+/// 当前安装形态与授权能力，供设置页决定应用内安装还是跳转下载
+#[derive(serde::Serialize)]
+pub struct UpdateCapability {
+    /// appimage / deb / rpm
+    pub install_kind: &'static str,
+    /// 是否依赖 polkit 授权（AppImage 不需要）
+    pub requires_polkit: bool,
+    /// 是否检测到 polkit 认证代理；不需要授权时恒为 true
+    pub polkit_agent: bool,
+}
+
+#[tauri::command]
+pub fn get_update_capability() -> UpdateCapability {
+    let kind = detect_install_kind();
+    UpdateCapability {
+        install_kind: match kind {
+            InstallKind::AppImage => "appimage",
+            InstallKind::Deb => "deb",
+            InstallKind::Rpm => "rpm",
+        },
+        requires_polkit: kind != InstallKind::AppImage,
+        polkit_agent: kind == InstallKind::AppImage || polkit_agent_running(),
+    }
 }
 
 /// 检查更新。`force = false` 时受 24 小时节流限制（启动静默检查使用）。
@@ -907,6 +1003,16 @@ mod tests {
             size: 1,
         }];
         assert!(pick_asset(&assets, InstallKind::Deb).is_none());
+    }
+
+    #[test]
+    fn recognizes_common_polkit_agents() {
+        assert!(is_polkit_agent("polkit-gnome-authentication-agent-1"));
+        assert!(is_polkit_agent("polkit-kde-authentication-agent-1"));
+        assert!(is_polkit_agent("hyprpolkitagent"));
+        assert!(is_polkit_agent("gnome-shell"));
+        assert!(!is_polkit_agent("bash"));
+        assert!(!is_polkit_agent(""));
     }
 
     #[test]

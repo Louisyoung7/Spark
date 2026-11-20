@@ -158,6 +158,7 @@ pub fn run() {
             windows::begin_resize,
             windows::end_resize,
             update::get_update_status,
+            update::get_update_capability,
             update::check_update,
             update::download_and_install_update,
             update::open_release_page
