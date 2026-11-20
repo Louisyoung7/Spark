@@ -30,3 +30,12 @@ export function rangeStart(range) {
 export function noteKey(note) {
   return `${note.line}:${note.time}`;
 }
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+// 回收站剩余天数：向上取整，已过期返回 0，时间非法返回 null
+export function daysLeft(expiresAt, now = Date.now()) {
+  const end = new Date(expiresAt).getTime();
+  if (Number.isNaN(end)) return null;
+  return Math.max(0, Math.ceil((end - now) / DAY_MS));
+}

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { formatFullTime, formatTime, noteKey, pad2, rangeStart } from "./format.js";
+import { daysLeft, formatFullTime, formatTime, noteKey, pad2, rangeStart } from "./format.js";
 
 // 时间格式化按本地时区解析与展示，用本地构造再转 ISO，避免测试依赖运行环境时区
 function localIso(year, month, day, hour, minute) {
@@ -44,4 +44,19 @@ test("rangeStart 以本地自然日零点为界", () => {
 
 test("noteKey 用行号与时间定位记录", () => {
   assert.equal(noteKey({ line: 7, time: "2026-11-19T08:05:00Z" }), "7:2026-11-19T08:05:00Z");
+});
+
+test("daysLeft 向上取整剩余天数", () => {
+  const now = new Date(2026, 10, 20, 12, 0).getTime();
+  const expires = new Date(2026, 10, 21, 0, 0).toISOString();
+  assert.equal(daysLeft(expires, now), 1);
+});
+
+test("daysLeft 已过期返回 0", () => {
+  const now = new Date(2026, 10, 20, 12, 0).getTime();
+  assert.equal(daysLeft(new Date(2026, 10, 19, 12, 0).toISOString(), now), 0);
+});
+
+test("daysLeft 对无效时间返回 null", () => {
+  assert.equal(daysLeft("not-a-date"), null);
 });

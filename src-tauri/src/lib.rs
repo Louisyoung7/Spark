@@ -5,8 +5,9 @@
 //!
 //! ```text
 //! config ──> paths ──> settings ──> notes
-//!                          └──────> hotkeys ──> tray
-//!                          └──────> update ────┘
+//!              │           └──────> hotkeys ──> tray
+//!              │           └──────> update ────┘
+//!              └──> trash ──> notes
 //!              config ──> windows ──────┘
 //! ```
 
@@ -15,6 +16,7 @@ mod hotkeys;
 mod notes;
 mod paths;
 mod settings;
+mod trash;
 mod tray;
 mod update;
 mod windows;
@@ -74,6 +76,11 @@ pub fn run() {
                 app.handle(),
             ))));
 
+            // 启动时清理回收站中已过保留期的记录
+            if let Err(e) = trash::purge_expired(app.handle()) {
+                log::warn!("清理回收站失败: {e}");
+            }
+
             #[cfg(desktop)]
             tray::setup(app.handle())?;
 
@@ -130,7 +137,11 @@ pub fn run() {
             notes::save_note,
             notes::list_notes,
             notes::edit_note,
-            notes::delete_note,
+            trash::delete_note,
+            trash::list_trash,
+            trash::restore_trash_note,
+            trash::purge_trash_note,
+            trash::empty_trash,
             notes::save_image,
             notes::export_notes,
             notes::import_notes,

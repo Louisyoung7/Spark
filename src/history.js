@@ -1,6 +1,6 @@
 import { createEditor, EditorView, setEditorTheme } from "./editor/index.js";
 import { dataUrlToBytes, drawExportImage, exportFileName } from "./history/exportImage.js";
-import { formatTime, noteKey, rangeStart } from "./history/format.js";
+import { daysLeft, formatTime, noteKey, rangeStart } from "./history/format.js";
 import { escapeHtml, renderOutline } from "./markdown/renderHtml.js";
 import { initTheme } from "./theme.js";
 import { listKeyCommands, saveCommands } from "./shared/editorCommands.js";
@@ -37,10 +37,46 @@ const selectCopy = document.getElementById("select-copy");
 const selectExport = document.getElementById("select-export");
 const selectDelete = document.getElementById("select-delete");
 const selectCancel = document.getElementById("select-cancel");
+const historyTitle = document.getElementById("history-title");
+const searchWrap = document.getElementById("search-wrap");
+const filtersEl = document.getElementById("filters");
+const trashBtn = document.getElementById("trash-btn");
+const trashBar = document.getElementById("trash-bar");
+const trashHint = document.getElementById("trash-hint");
+const trashEmpty = document.getElementById("trash-empty");
+const confirmView = document.getElementById("confirm-view");
+const confirmTitle = document.getElementById("confirm-title");
+const confirmDesc = document.getElementById("confirm-desc");
+const confirmOk = document.getElementById("confirm-ok");
+const confirmCancel = document.getElementById("confirm-cancel");
 
 const RANGE_LABELS = { all: "全部", today: "今天", "7d": "近7天", "30d": "近30天" };
 
 const showToast = createFlashStatus(toastEl, 1200);
+
+// 通用确认弹窗：返回 Promise<boolean>，确认按钮文案可定制
+let confirmResolve = null;
+
+function askConfirm({ title, desc, okText = "确认" }) {
+  confirmTitle.textContent = title;
+  confirmDesc.textContent = desc;
+  confirmOk.textContent = okText;
+  confirmView.classList.remove("hidden");
+  confirmOk.focus();
+  return new Promise((resolve) => {
+    confirmResolve = resolve;
+  });
+}
+
+function closeConfirm(result) {
+  confirmView.classList.add("hidden");
+  const resolve = confirmResolve;
+  confirmResolve = null;
+  resolve?.(result);
+}
+
+confirmOk.addEventListener("click", () => closeConfirm(true));
+confirmCancel.addEventListener("click", () => closeConfirm(false));
 
 async function copyText(text) {
   try {
@@ -65,6 +101,7 @@ const ICON_COPY = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" st
 const ICON_EDIT = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11.5 2.5l2 2L5 13H3v-2z"/></svg>`;
 const ICON_DELETE = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 4.5h11"/><path d="M6.5 4.5V3a.5.5 0 0 1 .5-.5h2a.5.5 0 0 1 .5.5v1.5"/><path d="M4 4.5l.6 8a1 1 0 0 0 1 .9h4.8a1 1 0 0 0 1-.9l.6-8"/><path d="M6.5 7v4M9.5 7v4"/></svg>`;
 const ICON_CHECK = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.5L6.5 11.5L12.5 4.5"/></svg>`;
+const ICON_RESTORE = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 3v3.5H6"/><path d="M2.9 9.6A5.2 5.2 0 1 0 4 4.1L2.5 6.5"/></svg>`;
 
 const HIGHLIGHT_MS = 1600;
 let highlightTimer = null;
@@ -140,10 +177,16 @@ function render(notes) {
     });
     item.querySelector(".act-edit").addEventListener("click", () => enterEdit(note));
     item.querySelector(".act-del").addEventListener("click", async () => {
+      const ok = await askConfirm({
+        title: "删除这条速记？",
+        desc: `删除后会移入回收站，${retentionDays} 天内可随时恢复。`,
+        okText: "移入回收站",
+      });
+      if (!ok) return;
       try {
         await invoke("delete_note", { line: note.line, expectedTime: note.time });
         await load();
-        showToast("已删除");
+        showToast("已移入回收站");
       } catch (err) {
         showToast(`删除失败：${err}`);
         // 记录可能已被外部改动，重新拉取避免列表继续指向错误行号
@@ -212,12 +255,15 @@ async function saveEdit() {
 
 // 全量记录缓存，搜索与时间筛选只在前端过滤，不重复请求后端
 let allNotes = [];
+let trashEntries = [];
+// 保留天数由后端返回，避免前后端各写一份常量
+let retentionDays = 30;
+// 当前视图：notes（历史记录）/ trash（回收站）
+let view = "notes";
 
 // 选择状态用「行号 + 时间」标识，重新加载后行号变动也能对齐
 const selected = new Set();
 let selectMode = false;
-let deleteArmed = false;
-let deleteArmTimer = null;
 let activeRange = "all";
 
 function selectedNotes() {
@@ -262,16 +308,8 @@ function updateSelectBar() {
   selectDelete.disabled = n === 0;
 }
 
-function resetDeleteArm() {
-  deleteArmed = false;
-  clearTimeout(deleteArmTimer);
-  selectDelete.textContent = "删除";
-  selectDelete.classList.remove("is-armed");
-}
-
 function clearSelection() {
   selected.clear();
-  resetDeleteArm();
   updateSelectBar();
 }
 
@@ -292,7 +330,6 @@ function toggleSelected(note, item) {
   const isSelected = selected.has(key);
   item.classList.toggle("is-selected", isSelected);
   item.querySelector(".select-box")?.classList.toggle("is-checked", isSelected);
-  resetDeleteArm();
   updateSelectBar();
 }
 
@@ -311,17 +348,15 @@ selectCopy.addEventListener("click", async () => {
 
 selectExport.addEventListener("click", exportSelected);
 
-selectDelete.addEventListener("click", () => {
-  if (!selected.size) return;
-  if (!deleteArmed) {
-    deleteArmed = true;
-    selectDelete.textContent = "确认删除";
-    selectDelete.classList.add("is-armed");
-    deleteArmTimer = setTimeout(resetDeleteArm, 3000);
-    return;
-  }
-  resetDeleteArm();
-  deleteSelected();
+selectDelete.addEventListener("click", async () => {
+  const count = selected.size;
+  if (!count) return;
+  const ok = await askConfirm({
+    title: `删除选中的 ${count} 条速记？`,
+    desc: `删除后会移入回收站，${retentionDays} 天内可随时恢复。`,
+    okText: "移入回收站",
+  });
+  if (ok) deleteSelected();
 });
 
 async function exportSelected() {
@@ -365,21 +400,134 @@ async function deleteSelected() {
   }
   setSelectMode(false);
   await load();
-  showToast(fail ? `已删除 ${ok} 条，${fail} 条失败` : `已删除 ${ok} 条`);
+  showToast(fail ? `已移入回收站 ${ok} 条，${fail} 条失败` : `已移入回收站 ${ok} 条`);
 }
+
+/* ---------- 回收站 ---------- */
+
+function expiresLabel(entry) {
+  const days = daysLeft(entry.expires_at);
+  if (days === null) return "";
+  return days > 0 ? `${days} 天后彻底删除` : "即将彻底删除";
+}
+
+async function restoreEntry(entry) {
+  try {
+    await invoke("restore_trash_note", {
+      line: entry.line,
+      expectedDeletedAt: entry.deleted_at,
+    });
+    await load();
+    showToast("已恢复");
+  } catch (err) {
+    showToast(`恢复失败：${err}`);
+    await load();
+  }
+}
+
+async function purgeEntry(entry) {
+  const ok = await askConfirm({
+    title: "彻底删除这条速记？",
+    desc: "彻底删除后无法恢复。",
+    okText: "彻底删除",
+  });
+  if (!ok) return;
+  try {
+    await invoke("purge_trash_note", {
+      line: entry.line,
+      expectedDeletedAt: entry.deleted_at,
+    });
+    await load();
+    showToast("已彻底删除");
+  } catch (err) {
+    showToast(`删除失败：${err}`);
+    await load();
+  }
+}
+
+function renderTrash() {
+  listEl.innerHTML = "";
+  countEl.textContent = trashEntries.length ? `${trashEntries.length} 条` : "";
+  emptyEl.classList.toggle("hidden", trashEntries.length > 0);
+  if (!trashEntries.length) {
+    emptyTextEl.innerHTML = `回收站是空的<br /><span class="dim">删除的速记会在这里保留 ${retentionDays} 天</span>`;
+  }
+
+  for (const entry of trashEntries) {
+    const item = document.createElement("div");
+    item.className = "history-item";
+    item.innerHTML = `
+      <div class="history-item-head">
+        <span class="history-item-time">${escapeHtml(formatTime(entry.deleted_at))} 删除</span>
+        <span class="trash-expire">${expiresLabel(entry)}</span>
+        <div class="history-item-actions">
+          <button class="icon-btn act-restore" title="恢复" aria-label="恢复" tabindex="-1">${ICON_RESTORE}</button>
+          <button class="icon-btn act-purge" title="彻底删除" aria-label="彻底删除" tabindex="-1">${ICON_DELETE}</button>
+        </div>
+      </div>
+      <div class="history-item-content">${renderOutline(entry.content)}</div>`;
+    item.querySelector(".act-restore").addEventListener("click", () => restoreEntry(entry));
+    item.querySelector(".act-purge").addEventListener("click", () => purgeEntry(entry));
+    listEl.appendChild(item);
+  }
+}
+
+function setView(next) {
+  if (view === next) return;
+  view = next;
+  if (selectMode) setSelectMode(false);
+  const isTrash = view === "trash";
+  historyTitle.textContent = isTrash ? "回收站" : "历史记录";
+  trashBtn.textContent = isTrash ? "返回" : "回收站";
+  searchWrap.classList.toggle("hidden", isTrash);
+  filtersEl.classList.toggle("hidden", isTrash);
+  selectBtn.classList.toggle("hidden", isTrash);
+  trashBar.classList.toggle("hidden", !isTrash);
+  cardEl.classList.toggle("trash-mode", isTrash);
+  if (isTrash) renderTrash();
+  else render(filterNotes());
+}
+
+trashBtn.addEventListener("click", () => setView(view === "trash" ? "notes" : "trash"));
+
+trashEmpty.addEventListener("click", async () => {
+  if (!trashEntries.length) {
+    showToast("回收站已是空的");
+    return;
+  }
+  const ok = await askConfirm({
+    title: "清空回收站？",
+    desc: `回收站中的 ${trashEntries.length} 条速记将被彻底删除，无法恢复。`,
+    okText: "清空",
+  });
+  if (!ok) return;
+  try {
+    await invoke("empty_trash");
+    await load();
+    showToast("回收站已清空");
+  } catch (err) {
+    showToast(`清空失败：${err}`);
+  }
+});
 
 async function load() {
   // 编辑态下窗口聚焦等事件可能触发刷新，避免覆盖正在编辑的内容
   if (editingNote) return;
   try {
-    allNotes = await invoke("list_notes");
+    const [notes, trash] = await Promise.all([invoke("list_notes"), invoke("list_trash")]);
+    allNotes = notes;
+    trashEntries = trash.entries;
+    retentionDays = trash.retention_days;
+    trashHint.textContent = `回收站保留 ${retentionDays} 天`;
+
     // 记录被外部改动后，剔除已不存在的选择项
     const validKeys = new Set(allNotes.map(noteKey));
     for (const key of selected) {
       if (!validKeys.has(key)) selected.delete(key);
     }
     updateSelectBar();
-    render(filterNotes());
+    if (view === "trash") renderTrash();
+    else render(filterNotes());
     highlightLatest(takeLastSavedAt());
   } catch (err) {
     showToast(`加载失败：${err}`);
@@ -404,6 +552,11 @@ document.getElementById("settings-btn").addEventListener("click", () => {
 });
 window.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
+  // 确认弹窗打开时，Esc 只关闭弹窗
+  if (!confirmView.classList.contains("hidden")) {
+    closeConfirm(false);
+    return;
+  }
   // 多选模式下 Esc 先退出选择，避免误关窗口丢失已选内容
   if (selectMode) {
     setSelectMode(false);

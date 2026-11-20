@@ -1,4 +1,4 @@
-//! 笔记存储：追加、读取、删除。
+//! 笔记存储：追加、读取、编辑。
 //!
 //! 数据以 JSON Lines 形式保存在当前笔记文件（默认 `~/.local/share/spark/notes.jsonl`，
 //! 可在设置中自定义）。换行由 serde_json 转义，每条记录始终占一个物理行。
@@ -21,7 +21,9 @@ use crate::settings;
 static NOTES_LOCK: Mutex<()> = Mutex::new(());
 
 /// 取得笔记文件锁；锁中毒说明此前有线程 panic，仍继续使用（数据本身由原子写保护）
-fn lock_notes() -> MutexGuard<'static, ()> {
+///
+/// 回收站删除 / 恢复会同时改动笔记文件与回收站文件，也复用这把锁串行化。
+pub(crate) fn lock_notes() -> MutexGuard<'static, ()> {
     NOTES_LOCK.lock().unwrap_or_else(|e| e.into_inner())
 }
 
@@ -50,7 +52,7 @@ pub struct ImportResult {
 
 /// 按物理行读取文件。列表、编辑、删除都必须基于同一套行号，
 /// 否则文件中出现空行或损坏行时，前端拿到的 id 会指向错误记录。
-fn read_lines(path: &Path) -> Result<Vec<String>, String> {
+pub(crate) fn read_lines(path: &Path) -> Result<Vec<String>, String> {
     let text = fs::read_to_string(path).map_err(|e| format!("读取文件失败: {e}"))?;
     Ok(text.lines().map(|l| l.to_string()).collect())
 }
@@ -67,7 +69,7 @@ fn sibling_path(path: &Path, suffix: &str) -> Result<PathBuf, String> {
 
 /// 先备份原文件，再写临时文件并原子替换，避免写一半崩溃损坏数据；
 /// 一次误删 / 误改后仍可从 `.bak` 找回上一版。
-fn write_lines_atomic(path: &Path, lines: &[String]) -> Result<(), String> {
+pub(crate) fn write_lines_atomic(path: &Path, lines: &[String]) -> Result<(), String> {
     if path.exists() {
         let backup = sibling_path(path, ".bak")?;
         fs::copy(path, &backup).map_err(|e| format!("备份原文件失败: {e}"))?;
@@ -187,7 +189,11 @@ pub async fn save_image(
 ///
 /// 行号只是位置而非稳定 id：文件被外部修改后下标可能指向另一条记录。
 /// 用 `time` 做乐观校验，不一致时拒绝写入，避免静默改错 / 删错。
-fn verify_line(lines: &[String], line: usize, expected_time: &str) -> Result<String, String> {
+pub(crate) fn verify_line(
+    lines: &[String],
+    line: usize,
+    expected_time: &str,
+) -> Result<String, String> {
     if line == 0 || line > lines.len() {
         return Err("记录不存在".into());
     }
@@ -230,22 +236,6 @@ pub fn edit_note(
     // 解析原始记录，校验 time 未变化，仅更新 content
     let time = verify_line(&lines, line, &expected_time)?;
     lines[line - 1] = serde_json::json!({ "time": time, "content": content }).to_string();
-
-    write_lines_atomic(&path, &lines)?;
-    Ok(())
-}
-
-/// 删除指定行（1 起始）的笔记，其余行写回。
-#[tauri::command]
-pub fn delete_note(app: AppHandle, line: usize, expected_time: String) -> Result<(), String> {
-    let path = settings::notes_path(&app)?;
-    let _guard = lock_notes();
-    if !path.exists() {
-        return Ok(());
-    }
-    let mut lines = read_lines(&path)?;
-    verify_line(&lines, line, &expected_time)?;
-    lines.remove(line - 1);
 
     write_lines_atomic(&path, &lines)?;
     Ok(())

@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use tauri::{AppHandle, Manager};
 
-use crate::config::{APP_DIR, NOTES_FILE, SETTINGS_FILE};
+use crate::config::{APP_DIR, NOTES_FILE, SETTINGS_FILE, TRASH_FILE};
 
 /// 数据目录：~/.local/share/spark/
 pub fn app_dir(app: &AppHandle) -> Result<PathBuf, String> {
@@ -17,6 +17,12 @@ pub fn app_dir(app: &AppHandle) -> Result<PathBuf, String> {
 /// 默认笔记文件：~/.local/share/spark/notes.jsonl
 pub fn default_notes_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(app_dir(app)?.join(NOTES_FILE))
+}
+
+/// 回收站文件：~/.local/share/spark/trash.jsonl
+/// 固定放在数据目录，不随自定义笔记路径迁移，换笔记文件后旧回收站仍可找回。
+pub fn trash_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app_dir(app)?.join(TRASH_FILE))
 }
 
 /// 设置文件：~/.local/share/spark/settings.json

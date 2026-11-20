@@ -11,14 +11,15 @@
   <body>
     <main class="history-card">
       <header class="history-header" data-drag-region>
-        <span class="history-title">历史记录</span>
+        <span id="history-title" class="history-title">历史记录</span>
         <span class="drag-grabber" aria-hidden="true"></span>
         <span id="count" class="history-count"></span>
         <button id="select-btn" class="icon-btn select-toggle" title="多选" tabindex="-1">选择</button>
+        <button id="trash-btn" class="icon-btn" title="回收站" tabindex="-1">回收站</button>
         <button id="settings-btn" class="icon-btn" title="设置" tabindex="-1">⚙</button>
         <button id="close-btn" class="icon-btn" title="关闭 (Esc)" tabindex="-1">✕</button>
       </header>
-      <div class="history-search">
+      <div id="search-wrap" class="history-search">
         <input
           id="search-input"
           class="history-search-input"
@@ -28,7 +29,7 @@
           spellcheck="false"
         />
       </div>
-      <div class="history-filters" role="group" aria-label="按时间筛选">
+      <div id="filters" class="history-filters" role="group" aria-label="按时间筛选">
         <button class="filter-chip is-active" data-range="all" tabindex="-1">全部</button>
         <button class="filter-chip" data-range="today" tabindex="-1">今天</button>
         <button class="filter-chip" data-range="7d" tabindex="-1">近7天</button>
@@ -79,6 +80,24 @@
         <button id="select-export" class="bar-btn" tabindex="-1">导出图片</button>
         <button id="select-delete" class="bar-btn bar-btn-danger" tabindex="-1">删除</button>
         <button id="select-cancel" class="bar-btn" tabindex="-1">取消</button>
+      </div>
+
+      <!-- 回收站底部操作条 -->
+      <div id="trash-bar" class="history-select-bar hidden">
+        <span id="trash-hint" class="history-select-count">回收站保留 30 天</span>
+        <button id="trash-empty" class="bar-btn bar-btn-danger" tabindex="-1">清空回收站</button>
+      </div>
+
+      <!-- 删除确认：覆盖整个窗口，避免误触直接删除 -->
+      <div id="confirm-view" class="confirm-view hidden">
+        <div class="confirm-card" role="dialog" aria-modal="true">
+          <div id="confirm-title" class="confirm-title"></div>
+          <div id="confirm-desc" class="confirm-desc"></div>
+          <div class="confirm-actions">
+            <button id="confirm-cancel" class="settings-btn" tabindex="-1">取消</button>
+            <button id="confirm-ok" class="save-btn" tabindex="-1">确认</button>
+          </div>
+        </div>
       </div>
 
       <div id="toast" class="history-toast"></div>

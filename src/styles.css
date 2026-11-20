@@ -629,15 +629,71 @@ body {
   color: var(--danger);
 }
 
-.bar-btn-danger.is-armed {
-  color: var(--text-on-accent);
-  background: var(--danger);
-  border-color: var(--danger);
+/* 操作条出现后，把 toast 抬到其上方 */
+.history-card.selecting .history-toast,
+.history-card.trash-mode .history-toast {
+  bottom: 100px;
 }
 
-/* 操作条出现后，把 toast 抬到其上方 */
-.history-card.selecting .history-toast {
-  bottom: 100px;
+/* ---------- 回收站 ---------- */
+
+.trash-expire {
+  font-size: 11px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.history-item-actions .act-restore:hover {
+  color: var(--accent);
+}
+
+.history-item-actions .act-purge:hover {
+  color: var(--danger);
+}
+
+/* ---------- 删除确认 ---------- */
+
+.confirm-view {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(17, 17, 27, 0.45);
+}
+
+.confirm-card {
+  width: 100%;
+  max-width: 320px;
+  padding: 18px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+}
+
+.confirm-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.confirm-desc {
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text-secondary);
+}
+
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
 }
 
 /* ---------- 编辑视图（覆盖整个历史窗口，体验与速记编辑器一致） ---------- */

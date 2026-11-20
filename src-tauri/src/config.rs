@@ -23,6 +23,7 @@ pub const SESSION_DESCRIPTION_HISTORY: &str = "Spark 历史记录";
 /// 数据目录名：~/.local/share/spark/
 pub const APP_DIR: &str = "spark";
 pub const NOTES_FILE: &str = "notes.jsonl";
+pub const TRASH_FILE: &str = "trash.jsonl";
 pub const SETTINGS_FILE: &str = "settings.json";
 
 // ---------- 窗口 ----------
