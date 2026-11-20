@@ -3,8 +3,10 @@
 //! 检查时间与结果缓存在 `settings.json`，同一台机器每 24 小时最多自动检查一次。
 //! 安装通过 `pkexec` 调起系统授权弹窗执行 `apt-get install`，成功后自动重启。
 
+use std::ffi::OsStr;
 use std::fs::{self, File};
 use std::io::{Read, Write};
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
@@ -134,8 +136,80 @@ fn truncate_notes(body: &str, max_chars: usize) -> String {
     out
 }
 
+/// 当前应用的安装形态，决定下载哪种产物以及如何安装
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum InstallKind {
+    AppImage,
+    Deb,
+    Rpm,
+}
+
+impl InstallKind {
+    /// 附件名后缀
+    fn suffix(self) -> &'static str {
+        match self {
+            InstallKind::AppImage => ".appimage",
+            InstallKind::Deb => ".deb",
+            InstallKind::Rpm => ".rpm",
+        }
+    }
+
+    /// 下载到缓存目录时使用的扩展名
+    fn extension(self) -> &'static str {
+        match self {
+            InstallKind::AppImage => "AppImage",
+            InstallKind::Deb => "deb",
+            InstallKind::Rpm => "rpm",
+        }
+    }
+}
+
+/// 识别当前进程来自 AppImage、deb 还是 rpm。
+///
+/// 先看 AppImage 运行时注入的环境变量，再查包管理器归属；
+/// 都不是（例如直接运行编译产物）时按系统里的包管理器兜底。
+fn detect_install_kind() -> InstallKind {
+    if std::env::var_os("APPIMAGE").is_some() {
+        return InstallKind::AppImage;
+    }
+
+    let exe = std::env::current_exe().unwrap_or_default();
+    if command_succeeds("dpkg-query", &[OsStr::new("-S"), exe.as_os_str()]) {
+        return InstallKind::Deb;
+    }
+    if command_succeeds("rpm", &[OsStr::new("-qf"), exe.as_os_str()]) {
+        return InstallKind::Rpm;
+    }
+
+    if command_exists("dnf") || command_exists("zypper") {
+        InstallKind::Rpm
+    } else {
+        InstallKind::Deb
+    }
+}
+
+/// 在 PATH 中查找可执行命令
+fn command_exists(name: &str) -> bool {
+    std::env::var_os("PATH")
+        .map(|paths| std::env::split_paths(&paths).any(|dir| dir.join(name).is_file()))
+        .unwrap_or(false)
+}
+
+/// 命令静默执行且退出码为 0
+fn command_succeeds(name: &str, args: &[&OsStr]) -> bool {
+    Command::new(name)
+        .args(args)
+        .output()
+        .map(|out| out.status.success())
+        .unwrap_or(false)
+}
+
 /// 解析 GitHub 响应；标签无法识别时返回 Ok(None)，视为「没有可用更新」
-fn parse_release_json(json: &str, current: &str) -> Result<Option<UpdateInfo>, String> {
+fn parse_release_json(
+    json: &str,
+    current: &str,
+    kind: InstallKind,
+) -> Result<Option<UpdateInfo>, String> {
     let release: ReleaseResp =
         serde_json::from_str(json).map_err(|e| format!("解析更新信息失败: {e}"))?;
     let Some(has_update) = is_newer(&release.tag_name, current) else {
@@ -146,8 +220,8 @@ fn parse_release_json(json: &str, current: &str) -> Result<Option<UpdateInfo>, S
         .unwrap_or(&release.tag_name)
         .to_string();
 
-    // 优先应用内安装 deb，没有对应附件时前端仍可回退到发布页
-    let deb = pick_deb_asset(&release.assets);
+    // 下载与当前安装形态一致的产物；没有对应附件时前端仍可回退到发布页
+    let asset = pick_asset(&release.assets, kind);
     Ok(Some(UpdateInfo {
         current: current.to_string(),
         latest,
@@ -155,8 +229,8 @@ fn parse_release_json(json: &str, current: &str) -> Result<Option<UpdateInfo>, S
         release_url: release.html_url,
         published_at: release.published_at,
         notes: truncate_notes(release.body.as_deref().unwrap_or(""), NOTES_MAX_CHARS),
-        download_url: deb.as_ref().map(|a| a.browser_download_url.clone()),
-        download_size: deb.as_ref().map(|a| a.size).filter(|size| *size > 0),
+        download_url: asset.as_ref().map(|a| a.browser_download_url.clone()),
+        download_size: asset.as_ref().map(|a| a.size).filter(|size| *size > 0),
         checked_at: 0,
     }))
 }
@@ -171,11 +245,14 @@ fn validate_download_url(url: &str) -> bool {
     url.starts_with(DOWNLOAD_PREFIX)
 }
 
-/// 从附件中挑出 deb 安装包；只接受本仓库的下载地址
-fn pick_deb_asset(assets: &[AssetResp]) -> Option<AssetResp> {
+/// 从附件中挑出与安装形态匹配的产物；只接受本仓库的下载地址
+fn pick_asset(assets: &[AssetResp], kind: InstallKind) -> Option<AssetResp> {
     assets
         .iter()
-        .find(|a| a.name.ends_with(".deb") && validate_download_url(&a.browser_download_url))
+        .find(|a| {
+            a.name.to_ascii_lowercase().ends_with(kind.suffix())
+                && validate_download_url(&a.browser_download_url)
+        })
         .cloned()
 }
 
@@ -206,7 +283,11 @@ fn build_agent(
 
 /// 同步请求 GitHub 最新 Release（在 blocking 线程中调用）。
 /// `proxy` 为空时保留 ureq 默认行为：读取 ALL_PROXY / HTTPS_PROXY 环境变量。
-fn fetch_latest(current: &str, proxy: Option<&str>) -> Result<Option<UpdateInfo>, String> {
+fn fetch_latest(
+    current: &str,
+    proxy: Option<&str>,
+    kind: InstallKind,
+) -> Result<Option<UpdateInfo>, String> {
     let agent = build_agent(current, proxy, REQUEST_TIMEOUT)?;
 
     let mut response = match agent
@@ -228,18 +309,19 @@ fn fetch_latest(current: &str, proxy: Option<&str>) -> Result<Option<UpdateInfo>
         .body_mut()
         .read_to_string()
         .map_err(|e| format!("读取更新信息失败: {e}"))?;
-    parse_release_json(&text, current)
+    parse_release_json(&text, current, kind)
 }
 
 // ---------- 下载与安装 ----------
 
-/// 流式下载 deb 到缓存目录，边下边广播进度。
-fn download_deb(
+/// 流式下载安装包到缓存目录，边下边广播进度。
+fn download_package(
     app: &AppHandle,
     version: &str,
     url: &str,
     expected_size: Option<u64>,
     proxy: Option<&str>,
+    kind: InstallKind,
 ) -> Result<PathBuf, String> {
     if !validate_download_url(url) {
         return Err("无效的下载地址".to_string());
@@ -262,7 +344,7 @@ fn download_deb(
         .map_err(|e| format!("获取缓存目录失败: {e}"))?
         .join("updates");
     fs::create_dir_all(&dir).map_err(|e| format!("创建下载目录失败: {e}"))?;
-    let path = dir.join("spark-update.deb");
+    let path = dir.join(format!("spark-update.{}", kind.extension()));
 
     let mut file = File::create(&path).map_err(|e| format!("创建安装包文件失败: {e}"))?;
     let mut reader = response.body_mut().as_reader();
@@ -315,24 +397,11 @@ fn download_deb(
     Ok(path)
 }
 
-/// 通过 pkexec 弹系统授权框，用 apt 安装下载好的 deb。
-fn install_deb(app: &AppHandle, path: &Path) -> Result<(), String> {
-    let _ = app.emit(
-        "update-progress",
-        UpdateProgress {
-            stage: "installing",
-            downloaded: 0,
-            total: 0,
-        },
-    );
-
+/// 通过 pkexec 弹系统授权框执行安装命令。
+fn run_privileged(program: &str, args: &[&OsStr]) -> Result<(), String> {
     let output = Command::new("pkexec")
-        .arg("env")
-        .arg("DEBIAN_FRONTEND=noninteractive")
-        .arg("apt-get")
-        .arg("install")
-        .arg("-y")
-        .arg(path)
+        .arg(program)
+        .args(args)
         .output()
         .map_err(|e| format!("无法启动系统授权程序: {e}"))?;
 
@@ -357,10 +426,98 @@ fn install_deb(app: &AppHandle, path: &Path) -> Result<(), String> {
     }
 }
 
+/// deb：apt 安装下载好的包
+fn install_deb(app: &AppHandle, path: &Path) -> Result<(), String> {
+    emit_installing(app);
+    run_privileged(
+        "env",
+        &[
+            OsStr::new("DEBIAN_FRONTEND=noninteractive"),
+            OsStr::new("apt-get"),
+            OsStr::new("install"),
+            OsStr::new("-y"),
+            path.as_os_str(),
+        ],
+    )
+}
+
+/// rpm：按系统里的包管理器选择 dnf 或 zypper
+fn install_rpm(app: &AppHandle, path: &Path) -> Result<(), String> {
+    emit_installing(app);
+    if command_exists("dnf") {
+        return run_privileged(
+            "dnf",
+            &[OsStr::new("install"), OsStr::new("-y"), path.as_os_str()],
+        );
+    }
+    if command_exists("zypper") {
+        return run_privileged(
+            "zypper",
+            &[
+                OsStr::new("--non-interactive"),
+                OsStr::new("install"),
+                OsStr::new("--allow-unsigned-rpm"),
+                path.as_os_str(),
+            ],
+        );
+    }
+    Err("未找到 dnf / zypper，请手动安装下载好的 rpm".to_string())
+}
+
+/// AppImage：直接替换当前 AppImage 文件，无需授权。
+/// 返回替换后的路径，供退出后重新启动。
+fn install_appimage(app: &AppHandle, downloaded: &Path) -> Result<PathBuf, String> {
+    emit_progress(app, "replacing");
+    let target = std::env::var_os("APPIMAGE")
+        .map(PathBuf::from)
+        .ok_or_else(|| "未找到 AppImage 路径，请手动下载替换".to_string())?;
+
+    // 先复制到同目录再原子替换，避免跨文件系统 rename 失败
+    let mut tmp = target.clone().into_os_string();
+    tmp.push(".new");
+    let tmp = PathBuf::from(tmp);
+    fs::copy(downloaded, &tmp).map_err(|e| format!("写入新版本失败: {e}"))?;
+    fs::set_permissions(&tmp, fs::Permissions::from_mode(0o755))
+        .map_err(|e| format!("设置可执行权限失败: {e}"))?;
+    if let Err(e) = fs::rename(&tmp, &target) {
+        let _ = fs::remove_file(&tmp);
+        return Err(format!("替换 AppImage 失败（目录可能不可写）: {e}"));
+    }
+    Ok(target)
+}
+
+/// 退出后由 shell 延迟启动新 AppImage，避免与单实例保护冲突
+fn relaunch_appimage(target: &Path) -> Result<(), String> {
+    Command::new("sh")
+        .arg("-c")
+        .arg("sleep 1; exec \"$1\"")
+        .arg("sh")
+        .arg(target)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("启动新版本失败，请手动打开: {e}"))
+}
+
+fn emit_progress(app: &AppHandle, stage: &'static str) {
+    let _ = app.emit(
+        "update-progress",
+        UpdateProgress {
+            stage,
+            downloaded: 0,
+            total: 0,
+        },
+    );
+}
+
+fn emit_installing(app: &AppHandle) {
+    emit_progress(app, "installing");
+}
+
 /// 下载并安装最新版本；成功后重启应用（不会返回）。
 async fn run_download_and_install(app: &AppHandle) -> Result<(), String> {
     let current = app.package_info().version.to_string();
     let proxy = settings::snapshot(app).proxy;
+    let kind = detect_install_kind();
 
     let cached = {
         let state = app.state::<UpdateState>();
@@ -378,7 +535,7 @@ async fn run_download_and_install(app: &AppHandle) -> Result<(), String> {
             let current_for_request = current.clone();
             let proxy_for_request = proxy.clone();
             let fetched = tauri::async_runtime::spawn_blocking(move || {
-                fetch_latest(&current_for_request, proxy_for_request.as_deref())
+                fetch_latest(&current_for_request, proxy_for_request.as_deref(), kind)
             })
             .await
             .map_err(|e| format!("检查更新失败: {e}"))??
@@ -388,31 +545,58 @@ async fn run_download_and_install(app: &AppHandle) -> Result<(), String> {
         }
     };
 
-    let url = info
-        .download_url
-        .clone()
-        .ok_or_else(|| "该版本没有提供 deb 安装包".to_string())?;
+    let url = info.download_url.clone().ok_or_else(|| {
+        format!(
+            "该版本没有提供 {} 安装包，请从发布页手动下载",
+            kind.extension()
+        )
+    })?;
     let expected_size = info.download_size;
 
     let app_for_download = app.clone();
     let version = current.clone();
     let path = tauri::async_runtime::spawn_blocking(move || {
-        download_deb(
+        download_package(
             &app_for_download,
             &version,
             &url,
             expected_size,
             proxy.as_deref(),
+            kind,
         )
     })
     .await
     .map_err(|e| format!("下载失败: {e}"))??;
 
+    log::info!("已下载新版本 {}（{:?}）", info.latest, kind);
+
+    if kind == InstallKind::AppImage {
+        // AppImage 不需要授权，替换文件后由新进程接管
+        let target = {
+            let app_for_install = app.clone();
+            let install_path = path.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                install_appimage(&app_for_install, &install_path)
+            })
+            .await
+            .map_err(|e| format!("安装失败: {e}"))??
+        };
+        let _ = fs::remove_file(&path);
+        relaunch_appimage(&target)?;
+        log::info!("已替换 AppImage，正在重启");
+        app.exit(0);
+        return Ok(());
+    }
+
     let app_for_install = app.clone();
     let install_path = path.clone();
-    tauri::async_runtime::spawn_blocking(move || install_deb(&app_for_install, &install_path))
-        .await
-        .map_err(|e| format!("安装失败: {e}"))??;
+    tauri::async_runtime::spawn_blocking(move || match kind {
+        InstallKind::Deb => install_deb(&app_for_install, &install_path),
+        InstallKind::Rpm => install_rpm(&app_for_install, &install_path),
+        InstallKind::AppImage => unreachable!(),
+    })
+    .await
+    .map_err(|e| format!("安装失败: {e}"))??;
 
     let _ = fs::remove_file(&path);
     log::info!("已安装新版本 {}，正在重启", info.latest);
@@ -515,8 +699,9 @@ async fn check_update_inner(app: AppHandle, force: bool) -> Result<Option<Update
     let current_for_request = current.clone();
     // 显式配置的代理优先；未配置时 fetch_latest 读取环境变量
     let proxy = settings::snapshot(&app).proxy;
+    let kind = detect_install_kind();
     let joined = tauri::async_runtime::spawn_blocking(move || {
-        fetch_latest(&current_for_request, proxy.as_deref())
+        fetch_latest(&current_for_request, proxy.as_deref(), kind)
     })
     .await;
     let checked = match joined {
@@ -651,7 +836,7 @@ mod tests {
             "body": "- 新增版本检查",
             "published_at": "2026-11-20T00:00:00Z"
         }"#;
-        let info = parse_release_json(json, "0.10.0")
+        let info = parse_release_json(json, "0.10.0", InstallKind::Deb)
             .unwrap()
             .expect("应识别为可解析的版本");
         assert_eq!(info.latest, "0.11.0");
@@ -667,7 +852,9 @@ mod tests {
             "body": null,
             "published_at": null
         }"#;
-        assert!(parse_release_json(json, "0.10.0").unwrap().is_none());
+        assert!(parse_release_json(json, "0.10.0", InstallKind::Deb)
+            .unwrap()
+            .is_none());
     }
 
     #[test]
@@ -688,22 +875,38 @@ mod tests {
                 }
             ]
         }"#;
-        let info = parse_release_json(json, "0.10.0").unwrap().unwrap();
+        let info = parse_release_json(json, "0.10.0", InstallKind::Deb)
+            .unwrap()
+            .unwrap();
         assert_eq!(
             info.download_url.as_deref(),
             Some("https://github.com/Louisyoung7/Spark/releases/download/v0.11.0/Spark_0.11.0_amd64.deb")
         );
         assert_eq!(info.download_size, Some(2048));
+
+        // 同一份 Release 在 AppImage / rpm 形态下应选中各自产物
+        let image = parse_release_json(json, "0.10.0", InstallKind::AppImage)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            image.download_url.as_deref(),
+            Some("https://github.com/Louisyoung7/Spark/releases/download/v0.11.0/Spark_0.11.0_amd64.AppImage")
+        );
+        assert!(parse_release_json(json, "0.10.0", InstallKind::Rpm)
+            .unwrap()
+            .unwrap()
+            .download_url
+            .is_none());
     }
 
     #[test]
-    fn pick_deb_asset_ignores_foreign_urls() {
+    fn pick_asset_ignores_foreign_urls() {
         let assets = vec![AssetResp {
             name: "Spark_0.11.0_amd64.deb".to_string(),
             browser_download_url: "https://example.com/Spark_0.11.0_amd64.deb".to_string(),
             size: 1,
         }];
-        assert!(pick_deb_asset(&assets).is_none());
+        assert!(pick_asset(&assets, InstallKind::Deb).is_none());
     }
 
     #[test]
@@ -725,7 +928,7 @@ mod tests {
             "tag_name": "v0.10.0",
             "html_url": "https://github.com/Louisyoung7/Spark/releases/tag/v0.10.0"
         }"#;
-        let info = parse_release_json(json, "0.10.0")
+        let info = parse_release_json(json, "0.10.0", InstallKind::Deb)
             .unwrap()
             .expect("同版本也应返回检查结果");
         assert!(!info.has_update);

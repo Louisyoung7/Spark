@@ -115,9 +115,10 @@ function renderUpdateError(message) {
 function renderProgress(event) {
   const { stage, downloaded, total } = event;
   els.updateProgress.classList.remove("hidden");
-  if (stage === "installing") {
+  if (stage === "installing" || stage === "replacing") {
     els.updateProgressFill.style.width = "100%";
-    els.updateProgressText.textContent = "正在安装，请在系统弹窗中输入密码…";
+    els.updateProgressText.textContent =
+      stage === "replacing" ? "正在替换 AppImage…" : "正在安装，请在系统弹窗中输入密码…";
     els.downloadUpdateBtn.textContent = "安装中…";
     return;
   }
