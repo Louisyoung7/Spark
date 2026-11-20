@@ -59,7 +59,7 @@ pub fn run() {
         .plugin(tauri_plugin_desktop_integration::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_xdg_portal::init())
-        // 版本更新：用系统默认浏览器打开 Release 页面
+        // 版本更新失败兜底：用系统默认浏览器打开 Release 页面
         .plugin(tauri_plugin_opener::init())
         // 开机自启：Linux 写 ~/.config/autostart/spark.desktop
         .plugin(tauri_plugin_autostart::init(
@@ -159,6 +159,7 @@ pub fn run() {
             windows::end_resize,
             update::get_update_status,
             update::check_update,
+            update::download_and_install_update,
             update::open_release_page
         ])
         .run(tauri::generate_context!())

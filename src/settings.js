@@ -33,6 +33,9 @@ const els = {
   updateResult: document.getElementById("update-result"),
   updateTitle: document.getElementById("update-title"),
   updateNotes: document.getElementById("update-notes"),
+  updateProgress: document.getElementById("update-progress"),
+  updateProgressFill: document.getElementById("update-progress-fill"),
+  updateProgressText: document.getElementById("update-progress-text"),
   updateActions: document.getElementById("update-actions"),
   downloadUpdateBtn: document.getElementById("download-update-btn"),
   openReleaseBtn: document.getElementById("open-release-btn"),
@@ -54,9 +57,26 @@ const flashStatus = createFlashStatus(els.status, 1800);
 const RELEASE_PAGE = "https://github.com/Louisyoung7/Spark/releases/latest";
 let currentUpdate = null;
 let checkingUpdate = false;
+// 下载 / 安装期间忽略重新渲染，避免窗口聚焦时把进度状态冲掉
+let updating = false;
+
+function formatBytes(bytes) {
+  if (!bytes) return "0 B";
+  const mb = bytes / (1024 * 1024);
+  return mb >= 1 ? `${mb.toFixed(1)} MB` : `${Math.ceil(bytes / 1024)} KB`;
+}
+
+function resetProgress() {
+  els.updateProgress.classList.add("hidden");
+  els.updateProgressFill.style.width = "0%";
+  els.updateProgressText.textContent = "";
+  els.downloadUpdateBtn.disabled = false;
+  els.downloadUpdateBtn.textContent = "下载并安装";
+}
 
 // info 为 null 表示还未检查过；有更新时展示说明摘要与下载入口
 function renderUpdate(info) {
+  if (updating) return;
   currentUpdate = info || null;
   if (!currentUpdate) {
     els.updateResult.classList.add("hidden");
@@ -64,6 +84,7 @@ function renderUpdate(info) {
   }
   els.updateResult.classList.remove("hidden");
   els.openReleaseBtn.classList.add("hidden");
+  resetProgress();
   if (currentUpdate.has_update) {
     els.updateTitle.textContent = `发现新版本 v${currentUpdate.latest}`;
     els.updateNotes.textContent = currentUpdate.notes || "该版本没有更新说明。";
@@ -81,6 +102,7 @@ function renderUpdate(info) {
 // 检查失败时仍给出口：交给浏览器走系统代理打开发布页
 function renderUpdateError(message) {
   currentUpdate = null;
+  resetProgress();
   els.updateResult.classList.remove("hidden");
   els.updateTitle.textContent = "检查更新失败";
   els.updateNotes.textContent = message || "无法获取更新信息。";
@@ -88,6 +110,23 @@ function renderUpdateError(message) {
   els.updateActions.classList.remove("hidden");
   els.downloadUpdateBtn.classList.add("hidden");
   els.openReleaseBtn.classList.remove("hidden");
+}
+
+function renderProgress(event) {
+  const { stage, downloaded, total } = event;
+  els.updateProgress.classList.remove("hidden");
+  if (stage === "installing") {
+    els.updateProgressFill.style.width = "100%";
+    els.updateProgressText.textContent = "正在安装，请在系统弹窗中输入密码…";
+    els.downloadUpdateBtn.textContent = "安装中…";
+    return;
+  }
+  const percent = total > 0 ? Math.min(100, Math.round((downloaded * 100) / total)) : 0;
+  els.updateProgressFill.style.width = `${percent}%`;
+  els.updateProgressText.textContent =
+    total > 0
+      ? `正在下载 ${percent}%（${formatBytes(downloaded)} / ${formatBytes(total)}）`
+      : `正在下载 ${formatBytes(downloaded)}`;
 }
 
 async function openReleasePage(url) {
@@ -99,7 +138,7 @@ async function openReleasePage(url) {
 }
 
 async function checkForUpdate() {
-  if (checkingUpdate) return;
+  if (checkingUpdate || updating) return;
   checkingUpdate = true;
   els.checkUpdateBtn.disabled = true;
   els.checkUpdateBtn.textContent = "检查中…";
@@ -118,8 +157,28 @@ async function checkForUpdate() {
 
 els.checkUpdateBtn.addEventListener("click", checkForUpdate);
 
-els.downloadUpdateBtn.addEventListener("click", () => {
-  if (currentUpdate) openReleasePage(currentUpdate.release_url);
+els.downloadUpdateBtn.addEventListener("click", async () => {
+  if (!currentUpdate || updating) return;
+  updating = true;
+  els.downloadUpdateBtn.disabled = true;
+  els.downloadUpdateBtn.textContent = "下载中…";
+  els.checkUpdateBtn.disabled = true;
+  els.openReleaseBtn.classList.add("hidden");
+  els.updateProgress.classList.remove("hidden");
+  els.updateProgressFill.style.width = "0%";
+  els.updateProgressText.textContent = "准备下载…";
+  try {
+    await invoke("download_and_install_update");
+    // 正常流程里应用会重启，这里仅作兜底
+    els.updateProgressText.textContent = "安装完成，正在重启…";
+  } catch (err) {
+    updating = false;
+    resetProgress();
+    els.downloadUpdateBtn.textContent = "重试下载";
+    els.checkUpdateBtn.disabled = false;
+    els.openReleaseBtn.classList.remove("hidden");
+    flashStatus(`更新失败：${err}`, true);
+  }
 });
 
 els.openReleaseBtn.addEventListener("click", () => openReleasePage(RELEASE_PAGE));
@@ -140,6 +199,7 @@ els.saveProxyBtn.addEventListener("click", async () => {
 // 托盘「检查更新」触发同一套手动检查流程
 listen("check-update", checkForUpdate);
 listen("update-status", (event) => renderUpdate(event.payload));
+listen("update-progress", (event) => renderProgress(event.payload));
 
 async function load() {
   let s;

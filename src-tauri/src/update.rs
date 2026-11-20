@@ -1,8 +1,12 @@
-//! 版本更新检查：查询 GitHub 最新 Release，与当前版本比较并缓存结果。
+//! 版本更新：查询 GitHub 最新 Release，比较版本并在应用内下载安装 deb。
 //!
-//! 第一阶段只做「检查 + 提示 + 跳转下载」，不负责应用内安装。
 //! 检查时间与结果缓存在 `settings.json`，同一台机器每 24 小时最多自动检查一次。
+//! 安装通过 `pkexec` 调起系统授权弹窗执行 `apt-get install`，成功后自动重启。
 
+use std::fs::{self, File};
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -16,14 +20,18 @@ use crate::tray;
 
 /// GitHub 最新 Release 接口（草稿与预发布不会出现在这里）
 const RELEASES_API: &str = "https://api.github.com/repos/Louisyoung7/Spark/releases/latest";
-/// 允许打开的下载页地址前缀
+/// 允许打开 / 下载的本仓库地址前缀
 const RELEASE_PREFIX: &str = "https://github.com/Louisyoung7/Spark/";
+/// 允许下载安装包的地址前缀
+const DOWNLOAD_PREFIX: &str = "https://github.com/Louisyoung7/Spark/releases/download/";
 /// 自动检查间隔：24 小时
 const CHECK_INTERVAL_SECS: i64 = 24 * 60 * 60;
 /// 更新说明最多保留的字符数
 const NOTES_MAX_CHARS: usize = 2000;
 /// 单次请求的整体超时
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+/// 安装包下载的整体超时（大文件与慢网络）
+const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 
 /// 一次检查得到的结果（同时用于事件广播与设置页渲染）
 #[derive(serde::Serialize, Clone, Debug, PartialEq, Eq)]
@@ -34,8 +42,21 @@ pub struct UpdateInfo {
     pub release_url: String,
     pub published_at: Option<String>,
     pub notes: String,
+    /// deb 安装包下载地址（旧缓存或没有 deb 资产时为 None）
+    pub download_url: Option<String>,
+    /// deb 安装包字节数，用于校验下载完整性
+    pub download_size: Option<u64>,
     /// epoch 秒
     pub checked_at: i64,
+}
+
+/// 下载 / 安装进度，通过 `update-progress` 事件推送给设置页
+#[derive(Clone, serde::Serialize)]
+struct UpdateProgress {
+    /// downloading / installing
+    stage: &'static str,
+    downloaded: u64,
+    total: u64,
 }
 
 /// 全局更新状态：内存缓存 + 检查中的并发标记。
@@ -46,6 +67,7 @@ pub struct UpdateState(Mutex<UpdateRuntime>);
 struct UpdateRuntime {
     info: Option<UpdateInfo>,
     checking: bool,
+    downloading: bool,
 }
 
 /// GitHub Release 响应中实际用到的字段
@@ -57,6 +79,17 @@ struct ReleaseResp {
     body: Option<String>,
     #[serde(default)]
     published_at: Option<String>,
+    #[serde(default)]
+    assets: Vec<AssetResp>,
+}
+
+/// Release 中的单个附件
+#[derive(Deserialize, Clone)]
+struct AssetResp {
+    name: String,
+    browser_download_url: String,
+    #[serde(default)]
+    size: u64,
 }
 
 // ---------- 纯函数（可单测） ----------
@@ -113,6 +146,8 @@ fn parse_release_json(json: &str, current: &str) -> Result<Option<UpdateInfo>, S
         .unwrap_or(&release.tag_name)
         .to_string();
 
+    // 优先应用内安装 deb，没有对应附件时前端仍可回退到发布页
+    let deb = pick_deb_asset(&release.assets);
     Ok(Some(UpdateInfo {
         current: current.to_string(),
         latest,
@@ -120,6 +155,8 @@ fn parse_release_json(json: &str, current: &str) -> Result<Option<UpdateInfo>, S
         release_url: release.html_url,
         published_at: release.published_at,
         notes: truncate_notes(release.body.as_deref().unwrap_or(""), NOTES_MAX_CHARS),
+        download_url: deb.as_ref().map(|a| a.browser_download_url.clone()),
+        download_size: deb.as_ref().map(|a| a.size).filter(|size| *size > 0),
         checked_at: 0,
     }))
 }
@@ -127,6 +164,19 @@ fn parse_release_json(json: &str, current: &str) -> Result<Option<UpdateInfo>, S
 /// 只允许打开本仓库的 GitHub 页面
 fn validate_release_url(url: &str) -> bool {
     url.starts_with(RELEASE_PREFIX)
+}
+
+/// 只允许下载本仓库 Release 中的附件
+fn validate_download_url(url: &str) -> bool {
+    url.starts_with(DOWNLOAD_PREFIX)
+}
+
+/// 从附件中挑出 deb 安装包；只接受本仓库的下载地址
+fn pick_deb_asset(assets: &[AssetResp]) -> Option<AssetResp> {
+    assets
+        .iter()
+        .find(|a| a.name.ends_with(".deb") && validate_download_url(&a.browser_download_url))
+        .cloned()
 }
 
 fn now_epoch() -> i64 {
@@ -138,17 +188,26 @@ fn now_epoch() -> i64 {
 
 // ---------- 网络 ----------
 
-/// 同步请求 GitHub 最新 Release（在 blocking 线程中调用）。
-/// `proxy` 为空时保留 ureq 默认行为：读取 ALL_PROXY / HTTPS_PROXY 环境变量。
-fn fetch_latest(current: &str, proxy: Option<&str>) -> Result<Option<UpdateInfo>, String> {
+/// 构建带版本 UA、超时与可选代理的 Agent
+fn build_agent(
+    version: &str,
+    proxy: Option<&str>,
+    timeout: Duration,
+) -> Result<ureq::Agent, String> {
     let mut builder = ureq::Agent::config_builder()
-        .timeout_global(Some(REQUEST_TIMEOUT))
-        .user_agent(format!("Spark/{current}"));
+        .timeout_global(Some(timeout))
+        .user_agent(format!("Spark/{version}"));
     if let Some(url) = proxy {
         let parsed = ureq::Proxy::new(url).map_err(|_| "代理地址无效".to_string())?;
         builder = builder.proxy(Some(parsed));
     }
-    let agent: ureq::Agent = builder.build().into();
+    Ok(builder.build().into())
+}
+
+/// 同步请求 GitHub 最新 Release（在 blocking 线程中调用）。
+/// `proxy` 为空时保留 ureq 默认行为：读取 ALL_PROXY / HTTPS_PROXY 环境变量。
+fn fetch_latest(current: &str, proxy: Option<&str>) -> Result<Option<UpdateInfo>, String> {
+    let agent = build_agent(current, proxy, REQUEST_TIMEOUT)?;
 
     let mut response = match agent
         .get(RELEASES_API)
@@ -170,6 +229,194 @@ fn fetch_latest(current: &str, proxy: Option<&str>) -> Result<Option<UpdateInfo>
         .read_to_string()
         .map_err(|e| format!("读取更新信息失败: {e}"))?;
     parse_release_json(&text, current)
+}
+
+// ---------- 下载与安装 ----------
+
+/// 流式下载 deb 到缓存目录，边下边广播进度。
+fn download_deb(
+    app: &AppHandle,
+    version: &str,
+    url: &str,
+    expected_size: Option<u64>,
+    proxy: Option<&str>,
+) -> Result<PathBuf, String> {
+    if !validate_download_url(url) {
+        return Err("无效的下载地址".to_string());
+    }
+
+    let agent = build_agent(version, proxy, DOWNLOAD_TIMEOUT)?;
+    let mut response = agent
+        .get(url)
+        .call()
+        .map_err(|e| format!("下载安装包失败: {e}"))?;
+    let total = response
+        .body()
+        .content_length()
+        .or(expected_size)
+        .unwrap_or(0);
+
+    let dir = app
+        .path()
+        .app_cache_dir()
+        .map_err(|e| format!("获取缓存目录失败: {e}"))?
+        .join("updates");
+    fs::create_dir_all(&dir).map_err(|e| format!("创建下载目录失败: {e}"))?;
+    let path = dir.join("spark-update.deb");
+
+    let mut file = File::create(&path).map_err(|e| format!("创建安装包文件失败: {e}"))?;
+    let mut reader = response.body_mut().as_reader();
+    let mut buf = [0u8; 64 * 1024];
+    let mut downloaded: u64 = 0;
+    let mut last_percent = u64::MAX;
+    loop {
+        let n = reader
+            .read(&mut buf)
+            .map_err(|e| format!("下载中断: {e}"))?;
+        if n == 0 {
+            break;
+        }
+        file.write_all(&buf[..n])
+            .map_err(|e| format!("写入安装包失败: {e}"))?;
+        downloaded += n as u64;
+        let percent = if total > 0 {
+            (downloaded * 100 / total).min(100)
+        } else {
+            0
+        };
+        if percent != last_percent {
+            last_percent = percent;
+            let _ = app.emit(
+                "update-progress",
+                UpdateProgress {
+                    stage: "downloading",
+                    downloaded,
+                    total,
+                },
+            );
+        }
+    }
+    file.flush().map_err(|e| format!("写入安装包失败: {e}"))?;
+    drop(file);
+
+    if downloaded == 0 {
+        let _ = fs::remove_file(&path);
+        return Err("下载的安装包为空".to_string());
+    }
+    // 附件大小已知时校验，避免网络截断导致装坏包
+    if let Some(expected) = expected_size.filter(|size| *size > 0) {
+        if downloaded != expected {
+            let _ = fs::remove_file(&path);
+            return Err(format!(
+                "安装包大小不一致（期望 {expected} 字节，实际 {downloaded} 字节）"
+            ));
+        }
+    }
+    Ok(path)
+}
+
+/// 通过 pkexec 弹系统授权框，用 apt 安装下载好的 deb。
+fn install_deb(app: &AppHandle, path: &Path) -> Result<(), String> {
+    let _ = app.emit(
+        "update-progress",
+        UpdateProgress {
+            stage: "installing",
+            downloaded: 0,
+            total: 0,
+        },
+    );
+
+    let output = Command::new("pkexec")
+        .arg("env")
+        .arg("DEBIAN_FRONTEND=noninteractive")
+        .arg("apt-get")
+        .arg("install")
+        .arg("-y")
+        .arg(path)
+        .output()
+        .map_err(|e| format!("无法启动系统授权程序: {e}"))?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    match output.status.code() {
+        // polkit：用户取消 / 未获得授权
+        Some(126) => return Err("已取消系统授权，安装未执行".to_string()),
+        Some(127) => return Err("未获得安装授权，请重试".to_string()),
+        _ => {}
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let lines: Vec<&str> = stderr.lines().filter(|l| !l.trim().is_empty()).collect();
+    let detail = lines[lines.len().saturating_sub(3)..].join(" ");
+    if detail.is_empty() {
+        Err(format!("安装失败（退出码 {:?}）", output.status.code()))
+    } else {
+        Err(format!("安装失败：{detail}"))
+    }
+}
+
+/// 下载并安装最新版本；成功后重启应用（不会返回）。
+async fn run_download_and_install(app: &AppHandle) -> Result<(), String> {
+    let current = app.package_info().version.to_string();
+    let proxy = settings::snapshot(app).proxy;
+
+    let cached = {
+        let state = app.state::<UpdateState>();
+        let g = state
+            .0
+            .lock()
+            .map_err(|e| format!("锁定更新状态失败: {e}"))?;
+        g.info.clone()
+    };
+
+    // 缓存结果没有附件信息（例如刚启动）时，重新请求一次 Release
+    let info = match cached.filter(|i| i.has_update && i.download_url.is_some()) {
+        Some(info) => info,
+        None => {
+            let current_for_request = current.clone();
+            let proxy_for_request = proxy.clone();
+            let fetched = tauri::async_runtime::spawn_blocking(move || {
+                fetch_latest(&current_for_request, proxy_for_request.as_deref())
+            })
+            .await
+            .map_err(|e| format!("检查更新失败: {e}"))??
+            .filter(|i| i.has_update)
+            .ok_or_else(|| "没有可下载的新版本".to_string())?;
+            fetched
+        }
+    };
+
+    let url = info
+        .download_url
+        .clone()
+        .ok_or_else(|| "该版本没有提供 deb 安装包".to_string())?;
+    let expected_size = info.download_size;
+
+    let app_for_download = app.clone();
+    let version = current.clone();
+    let path = tauri::async_runtime::spawn_blocking(move || {
+        download_deb(
+            &app_for_download,
+            &version,
+            &url,
+            expected_size,
+            proxy.as_deref(),
+        )
+    })
+    .await
+    .map_err(|e| format!("下载失败: {e}"))??;
+
+    let app_for_install = app.clone();
+    let install_path = path.clone();
+    tauri::async_runtime::spawn_blocking(move || install_deb(&app_for_install, &install_path))
+        .await
+        .map_err(|e| format!("安装失败: {e}"))??;
+
+    let _ = fs::remove_file(&path);
+    log::info!("已安装新版本 {}，正在重启", info.latest);
+    app.restart()
 }
 
 // ---------- 状态读取 ----------
@@ -194,6 +441,9 @@ fn cached_info(app: &AppHandle, current: &str) -> Option<UpdateInfo> {
         has_update,
         published_at: None,
         notes: saved.latest_update_notes.unwrap_or_default(),
+        // 缓存里没有附件信息；下载时会重新请求一次 Release
+        download_url: None,
+        download_size: None,
         checked_at: saved.last_update_check.unwrap_or(0),
     })
 }
@@ -211,6 +461,32 @@ pub fn get_update_status(app: AppHandle) -> Option<UpdateInfo> {
 #[tauri::command]
 pub async fn check_update(app: AppHandle, force: bool) -> Result<Option<UpdateInfo>, String> {
     check_update_inner(app, force).await
+}
+
+/// 应用内下载并安装最新版本。成功后自动重启，不会返回。
+#[tauri::command]
+pub async fn download_and_install_update(app: AppHandle) -> Result<(), String> {
+    {
+        let state = app.state::<UpdateState>();
+        let mut g = state
+            .0
+            .lock()
+            .map_err(|e| format!("锁定更新状态失败: {e}"))?;
+        if g.downloading {
+            return Err("正在下载更新…".to_string());
+        }
+        g.downloading = true;
+    }
+
+    let result = run_download_and_install(&app).await;
+
+    // 出错时恢复标记，允许重试；成功路径会重启进程
+    if let Some(state) = app.try_state::<UpdateState>() {
+        if let Ok(mut g) = state.0.lock() {
+            g.downloading = false;
+        }
+    }
+    result
 }
 
 async fn check_update_inner(app: AppHandle, force: bool) -> Result<Option<UpdateInfo>, String> {
@@ -392,6 +668,55 @@ mod tests {
             "published_at": null
         }"#;
         assert!(parse_release_json(json, "0.10.0").unwrap().is_none());
+    }
+
+    #[test]
+    fn parse_release_json_picks_deb_asset() {
+        let json = r#"{
+            "tag_name": "v0.11.0",
+            "html_url": "https://github.com/Louisyoung7/Spark/releases/tag/v0.11.0",
+            "assets": [
+                {
+                    "name": "Spark_0.11.0_amd64.AppImage",
+                    "browser_download_url": "https://github.com/Louisyoung7/Spark/releases/download/v0.11.0/Spark_0.11.0_amd64.AppImage",
+                    "size": 100
+                },
+                {
+                    "name": "Spark_0.11.0_amd64.deb",
+                    "browser_download_url": "https://github.com/Louisyoung7/Spark/releases/download/v0.11.0/Spark_0.11.0_amd64.deb",
+                    "size": 2048
+                }
+            ]
+        }"#;
+        let info = parse_release_json(json, "0.10.0").unwrap().unwrap();
+        assert_eq!(
+            info.download_url.as_deref(),
+            Some("https://github.com/Louisyoung7/Spark/releases/download/v0.11.0/Spark_0.11.0_amd64.deb")
+        );
+        assert_eq!(info.download_size, Some(2048));
+    }
+
+    #[test]
+    fn pick_deb_asset_ignores_foreign_urls() {
+        let assets = vec![AssetResp {
+            name: "Spark_0.11.0_amd64.deb".to_string(),
+            browser_download_url: "https://example.com/Spark_0.11.0_amd64.deb".to_string(),
+            size: 1,
+        }];
+        assert!(pick_deb_asset(&assets).is_none());
+    }
+
+    #[test]
+    fn validate_download_url_only_allows_release_assets() {
+        assert!(validate_download_url(
+            "https://github.com/Louisyoung7/Spark/releases/download/v0.11.0/Spark_0.11.0_amd64.deb"
+        ));
+        assert!(!validate_download_url(
+            "https://github.com/Louisyoung7/Spark/releases/tag/v0.11.0"
+        ));
+        assert!(!validate_download_url(
+            "https://example.com/Spark_0.11.0_amd64.deb"
+        ));
     }
 
     #[test]
