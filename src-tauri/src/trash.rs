@@ -8,7 +8,7 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::Path;
 
-use chrono::{DateTime, Duration, Local, SecondsFormat};
+use chrono::{DateTime, Duration, FixedOffset, Local, SecondsFormat};
 use tauri::AppHandle;
 
 use crate::notes;
@@ -155,6 +155,30 @@ fn append_line(path: &Path, line: &str) -> Result<(), String> {
     writeln!(file, "{line}").map_err(|e| format!("写入失败: {e}"))
 }
 
+/// 取一行笔记的时间；空行、损坏行或时间非法都返回 None。
+fn line_time(line: &str) -> Option<DateTime<FixedOffset>> {
+    let value = serde_json::from_str::<serde_json::Value>(line.trim()).ok()?;
+    DateTime::parse_from_rfc3339(value.get("time")?.as_str()?).ok()
+}
+
+/// 按时间升序把记录插回笔记行，尽量还原删除前的位置。
+///
+/// 写入顺序决定列表顺序（列表按文件逆序展示），因此不能简单追加到末尾。
+/// 时间相同时排在同时间记录之后；时间无法解析时退化为追加。
+fn insert_note_line(lines: &[String], note: &str, time: &str) -> Vec<String> {
+    let mut next = lines.to_vec();
+    let target = DateTime::parse_from_rfc3339(time).ok();
+    let index = target.and_then(|target| {
+        next.iter()
+            .position(|line| line_time(line).is_some_and(|t| t > target))
+    });
+    match index {
+        Some(index) => next.insert(index, note.to_string()),
+        None => next.push(note.to_string()),
+    }
+    next
+}
+
 /// 从笔记文件读出指定行的正文（与笔记列表共用同一套物理行号）。
 fn note_content(lines: &[String], line: usize) -> Result<String, String> {
     let value = serde_json::from_str::<serde_json::Value>(lines[line - 1].trim())
@@ -238,9 +262,14 @@ pub fn restore_trash_note(
             && value.get("content").and_then(|c| c.as_str()) == Some(record.content.as_str())
     });
     if !exists {
+        // 保留原时间，并按时间插回原位置，避免恢复后跑到列表最前面
         let note =
-            serde_json::json!({ "time": record.time, "content": record.content }).to_string();
-        append_line(&notes_path, &note)?;
+            serde_json::json!({ "time": &record.time, "content": &record.content }).to_string();
+        let merged = insert_note_line(&note_lines, &note, &record.time);
+        if let Some(dir) = notes_path.parent() {
+            fs::create_dir_all(dir).map_err(|e| format!("创建目录失败: {e}"))?;
+        }
+        notes::write_lines_atomic(&notes_path, &merged)?;
     }
 
     trash_lines.remove(line - 1);
@@ -364,5 +393,69 @@ mod tests {
         let lines = vec![String::new(), record("t1", "正文", "d1")];
         assert_eq!(note_content(&lines, 2).unwrap(), "正文");
         assert!(note_content(&lines, 1).is_err());
+    }
+
+    #[test]
+    fn insert_note_line_restores_original_position() {
+        let lines = vec![
+            record("2026-11-01T10:00:00+08:00", "一", "d"),
+            record("2026-11-03T10:00:00+08:00", "三", "d"),
+        ];
+        let restored = record("2026-11-02T10:00:00+08:00", "二", "d");
+
+        let merged = insert_note_line(&lines, &restored, "2026-11-02T10:00:00+08:00");
+
+        assert_eq!(merged.len(), 3);
+        assert_eq!(merged[0], lines[0]);
+        assert_eq!(merged[1], restored);
+        assert_eq!(merged[2], lines[1]);
+    }
+
+    #[test]
+    fn insert_note_line_appends_when_newest() {
+        let lines = vec![record("2026-11-01T10:00:00+08:00", "一", "d")];
+        let restored = record("2026-11-05T10:00:00+08:00", "二", "d");
+
+        let merged = insert_note_line(&lines, &restored, "2026-11-05T10:00:00+08:00");
+
+        assert_eq!(merged.last().unwrap(), &restored);
+    }
+
+    #[test]
+    fn insert_note_line_keeps_equal_time_after_existing() {
+        let lines = vec![
+            record("2026-11-01T10:00:00+08:00", "一", "d"),
+            record("2026-11-01T10:00:00+08:00", "二", "d"),
+        ];
+        let restored = record("2026-11-01T10:00:00+08:00", "三", "d");
+
+        let merged = insert_note_line(&lines, &restored, "2026-11-01T10:00:00+08:00");
+
+        assert_eq!(merged.len(), 3);
+        assert_eq!(merged[2], restored);
+    }
+
+    #[test]
+    fn insert_note_line_skips_corrupt_lines_when_ordering() {
+        let lines = vec![
+            "not json".to_string(),
+            record("2026-11-03T10:00:00+08:00", "三", "d"),
+        ];
+        let restored = record("2026-11-02T10:00:00+08:00", "二", "d");
+
+        let merged = insert_note_line(&lines, &restored, "2026-11-02T10:00:00+08:00");
+
+        assert_eq!(merged[0], "not json");
+        assert_eq!(merged[1], restored);
+    }
+
+    #[test]
+    fn insert_note_line_appends_when_time_invalid() {
+        let lines = vec![record("2026-11-01T10:00:00+08:00", "一", "d")];
+        let restored = record("not-a-time", "二", "d");
+
+        let merged = insert_note_line(&lines, &restored, "not-a-time");
+
+        assert_eq!(merged.last().unwrap(), &restored);
     }
 }
