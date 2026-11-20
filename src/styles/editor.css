@@ -1,0 +1,161 @@
+/* ---------- 速记编辑器 ---------- */
+
+.editor-header {
+  position: relative; /* 供拖拽把手居中 */
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+
+.editor-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  letter-spacing: 0.5px;
+}
+
+.word-count {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 编辑框内联大纲渲染：overlay 装饰层与 textarea 逐字符对齐，把 - / * / + 渲染为圆点 */
+.editor-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* CodeMirror 编辑器挂载点：绝对填充编辑容器 */
+.cm-host {
+  position: absolute;
+  inset: 0;
+}
+
+/* 空文档浮层：与编辑器内边距对齐，不拦截点击 */
+.editor-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 20px 22px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.editor-empty-title {
+  font-size: var(--font-body);
+  line-height: var(--lh-body);
+}
+
+.editor-empty-sub {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+/* 键位胶囊：速记空状态与历史空状态共用 */
+.kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  padding: 1px 7px;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: var(--surface-strong);
+  border: 1px solid var(--border-strong);
+  border-bottom-width: 2px;
+  border-radius: var(--radius-xs);
+}
+
+.editor-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+
+.hint {
+  flex: 1;
+  min-height: 13px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.save-btn {
+  font-size: 13px;
+  color: var(--text-on-accent);
+  font-weight: 600;
+  background: var(--accent);
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 6px 18px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.save-btn:hover {
+  background: var(--accent-hover);
+}
+
+.save-btn:active {
+  background: var(--accent-active);
+}
+
+/* 占位符 / 焦点样式已并入 .editor-surface */
+
+/* 保存提示与历史 toast 共用一套外观：底部居中、胶囊、向上浮入 */
+.status,
+.history-toast {
+  position: absolute;
+  bottom: 56px;
+  left: 50%;
+  transform: translateX(-50%) translateY(6px);
+  font-size: 12px;
+  color: var(--text);
+  background: var(--surface-strong);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  padding: 6px 16px;
+  max-width: calc(100% - 32px);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0;
+  pointer-events: none;
+  box-shadow: var(--shadow-card);
+  transition:
+    opacity var(--duration) ease,
+    transform var(--duration) ease;
+}
+
+.status.show,
+.history-toast.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+.status.error {
+  color: var(--danger);
+}
+
+.hint {
+  min-height: 13px;
+  font-size: 11px;
+  color: var(--text-faint);
+  text-align: right;
+}
