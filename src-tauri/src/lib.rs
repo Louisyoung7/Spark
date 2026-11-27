@@ -39,7 +39,7 @@ use crate::windows::{
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         // 日志最先注册，后续插件初始化失败时也能留下记录
         .plugin(
             tauri_plugin_log::Builder::new()
@@ -75,7 +75,12 @@ pub fn run() {
             Some(vec!["--silent"]),
         ))
         .setup(|app| {
-            log::info!("Spark v{} 启动", env!("CARGO_PKG_VERSION"));
+            logging::install_panic_hook();
+            log::info!(
+                "Spark v{} 启动（PID {}）",
+                env!("CARGO_PKG_VERSION"),
+                std::process::id()
+            );
             match app.path().app_log_dir() {
                 Ok(dir) => log::info!("日志目录: {}", dir.display()),
                 Err(e) => log::warn!("获取日志目录失败: {e}"),
@@ -182,11 +187,20 @@ pub fn run() {
             update::download_and_install_update,
             update::open_release_page
         ])
-        .run(tauri::generate_context!())
+        .build(tauri::generate_context!())
         .unwrap_or_else(|e| {
-            log::error!("应用启动失败: {e}");
+            log::error!("应用初始化失败: {e}");
+            eprintln!("应用初始化失败: {e}");
             std::process::exit(1);
         });
+
+    app.run(|_app, event| match event {
+        tauri::RunEvent::ExitRequested { code, .. } => {
+            log::info!("收到退出请求（code={code:?}）");
+        }
+        tauri::RunEvent::Exit => log::info!("应用主循环退出"),
+        _ => {}
+    });
 }
 
 /// WebKitGTK 的内容最小尺寸会撑大窗口：
