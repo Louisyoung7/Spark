@@ -7,7 +7,7 @@ import { listKeyCommands, saveCommands } from "./shared/editorCommands.js";
 import { createFlashStatus } from "./shared/feedback.js";
 import { LAST_SAVED_KEY } from "./shared/keys.js";
 import { enableWindowDragging } from "./shared/window.js";
-import { invoke, initFrontendLogging } from "./shared/log.js";
+import { invoke, initFrontendLogging, logDebug } from "./shared/log.js";
 
 const { getCurrentWindow } = window.__TAURI__.window;
 const { listen } = window.__TAURI__.event;
@@ -64,6 +64,7 @@ function askConfirm({ title, desc, okText = "确认" }) {
   confirmDesc.textContent = desc;
   confirmOk.textContent = okText;
   confirmView.classList.remove("hidden");
+  logDebug(`打开确认弹窗: ${title}`);
   confirmOk.focus();
   return new Promise((resolve) => {
     confirmResolve = resolve;
@@ -71,6 +72,7 @@ function askConfirm({ title, desc, okText = "确认" }) {
 }
 
 function closeConfirm(result) {
+  logDebug(`关闭确认弹窗: ${result ? "确认" : "取消"}`);
   confirmView.classList.add("hidden");
   const resolve = confirmResolve;
   confirmResolve = null;
@@ -211,6 +213,7 @@ function enterEdit(note) {
   });
   updateEditCount();
   editView.classList.remove("hidden");
+  logDebug("进入历史编辑视图");
   editEditor.focus();
   const len = editEditor.state.doc.length;
   editEditor.dispatch({ selection: { anchor: len } });
@@ -232,6 +235,7 @@ function updateEditCount() {
 function exitEdit() {
   editingNote = null;
   editView.classList.add("hidden");
+  logDebug("退出历史编辑视图");
 }
 
 editSave.addEventListener("click", saveEdit);

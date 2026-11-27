@@ -120,10 +120,12 @@ pub fn run() {
                 }
             }
             WindowEvent::Focused(true) => {
+                log::debug!("窗口 {} 获得焦点", window.label());
                 // 拖拽缩放结束后窗口重新聚焦，清除抑制标记
                 clear_resizing(window.app_handle());
             }
             WindowEvent::Focused(false) => {
+                log::debug!("窗口 {} 失去焦点", window.label());
                 // 设置窗口：若在录制快捷键时切走，恢复绑定，
                 // 否则全局快捷键会一直处于注销状态
                 if window.label() == LABEL_SETTINGS {

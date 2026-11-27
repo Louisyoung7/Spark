@@ -72,5 +72,20 @@ export function initFrontendLogging() {
   window.addEventListener("unhandledrejection", (event) => {
     send("error", `未处理的 Promise 拒绝: ${formatError(event.reason)}`);
   });
+
+  // 前端焦点 / 可见性变化：与 Rust 侧窗口事件对照，可判断 WebView 是否还在响应。
+  // Node 单测只提供 window 桩，没有 document，跳过 DOM 相关监听。
+  if (typeof document !== "undefined") {
+    window.addEventListener("focus", () => logDebug("窗口获得焦点"));
+    window.addEventListener("blur", () => logDebug("窗口失去焦点"));
+    document.addEventListener("visibilitychange", () => {
+      logDebug(`页面可见性: ${document.visibilityState}`);
+    });
+    // 仅前台窗口记录心跳；心跳中断而 Rust 侧仍有窗口日志时，说明渲染进程可能已挂起。
+    setInterval(() => {
+      if (document.visibilityState === "visible") logDebug("前端心跳");
+    }, 60_000);
+  }
+
   logInfo("前端日志已接入");
 }
