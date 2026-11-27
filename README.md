@@ -65,7 +65,13 @@
 - **快捷键**：点击输入框后直接按下组合键即可录制；X11 下立即生效，Wayland 受 Portal 限制需重启
   - `Esc` 取消录制，`Backspace` 恢复默认值
   - 录制期间会临时注销全局快捷键，避免按下组合键时弹出窗口打断
-- **检查更新**：「关于」显示当前版本，可手动检查；发现新版本时展示更新说明摘要与「下载新版」按钮，跳转 GitHub Release
+- **检查更新**：「关于」显示当前版本，可手动检查；发现新版本时展示更新说明摘要与「下载并安装」按钮
+  - 自动识别当前安装形态并下载对应产物：
+    - AppImage：替换当前 AppImage 文件后自动重启，无需管理员授权
+    - deb：通过 `pkexec` 授权后用 `apt` 安装，装完自动重启
+    - rpm：通过 `pkexec` 授权后用 `dnf`（或 `zypper`）安装，装完自动重启
+  - 应用内下载会显示进度；取消授权或安装失败时提示原因，可重试或改为手动安装
+  - deb/rpm 安装前会检测 polkit 认证代理：未检测到时（常见于 Sway / Hyprland 等未配置 agent 的桌面）隐藏安装按钮，改为「打开发布页」手动下载
   - 启动后每天最多自动检查一次，托盘菜单会同步显示「发现新版本 vX.Y.Z」
   - 检查失败时保留「打开发布页」入口，可交给浏览器走自己的网络环境
   - 支持为检查请求单独配置代理（如 `http://127.0.0.1:7890`、`socks5h://127.0.0.1:7890`）；留空时读取 `ALL_PROXY` / `HTTPS_PROXY` 环境变量
@@ -102,7 +108,7 @@ npm run tauri build   # 产出安装包
 - **前端模块**：`src/editor/` 负责 CodeMirror 装配、逐行装饰与主题；`src/markdown/` 存放编辑器与历史预览共用的列表层级规则；`src/theme.js` 负责主题解析与跨窗口同步
 - **主题**：偏好写入 `settings.json`，切换后通过 Tauri 事件广播；系统模式使用 `prefers-color-scheme` 检测
 - **全局快捷键**：`tauri-plugin-desktop-integration` 统一注册 —— X11 直接 grab，Wayland 走 XDG Portal（首次绑定会弹系统授权对话框，属正常现象）。注：Wayland Portal 路径目前仅支持单个快捷键会话，双快捷键在 X11 下完整可用
-- **版本更新**：`src-tauri/src/update.rs` 查询 GitHub 最新 Release，版本比较与解析为纯函数；结果缓存在 `settings.json`，启动检查 24 小时节流，下载页由 `tauri-plugin-opener` 打开
+- **版本更新**：`src-tauri/src/update.rs` 查询 GitHub 最新 Release，版本比较与资产选择为纯函数；结果缓存在 `settings.json`，启动检查 24 小时节流。运行时按 `APPIMAGE` 环境变量与包管理器归属识别安装形态，选择同形态产物：AppImage 直接替换文件并延迟重启，deb/rpm 通过 `pkexec` 调 `apt-get` / `dnf` / `zypper` 安装后重启；失败时由 `tauri-plugin-opener` 打开发布页兜底
 - **回收站**：`src-tauri/src/trash.rs` 负责删除、恢复、彻底删除与过期清理；与笔记文件共用同一把文件锁，删除顺序为「先写入回收站、再移除原记录」，中途失败最多留下重复，不会丢数据
 - **窗口定位**：速记窗口显示时定位到鼠标附近（多显示器下 clamp 到所在显示器），失败回退居中
 - **失焦行为**：速记窗口点击外部自动收起（250ms 防抖 + 边缘安全边距，避免缩放时误收起）；历史与设置窗口不自动收起
