@@ -35,26 +35,35 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
     // 保存句柄，供 update 模块发现新版本时修改菜单文字
     app.manage(TrayCheckItem(check_item.clone()));
 
-    let icon = app
-        .default_window_icon()
-        .expect("未找到默认窗口图标")
-        .clone();
+    let Some(icon) = app.default_window_icon() else {
+        log::error!("未找到默认窗口图标，托盘初始化失败");
+        return Err(tauri::Error::AssetNotFound("默认窗口图标".into()));
+    };
+    let icon = icon.clone();
 
     TrayIconBuilder::with_id("spark-tray")
         .icon(icon)
         .tooltip("Spark 速记")
         .menu(&menu)
         .show_menu_on_left_click(false)
-        .on_menu_event(|app, event| match event.id.as_ref() {
-            "show" => toggle_main_window(app),
-            "history" => toggle_history_window(app),
-            "settings" => toggle_settings_window(app),
-            "check-update" => {
-                show_settings_window(app);
-                let _ = app.emit("check-update", ());
+        .on_menu_event(|app, event| {
+            log::debug!("托盘菜单点击: {}", event.id.as_ref());
+            match event.id.as_ref() {
+                "show" => toggle_main_window(app),
+                "history" => toggle_history_window(app),
+                "settings" => toggle_settings_window(app),
+                "check-update" => {
+                    show_settings_window(app);
+                    if let Err(e) = app.emit("check-update", ()) {
+                        log::warn!("通知检查更新失败: {e}");
+                    }
+                }
+                "quit" => {
+                    log::info!("用户从托盘退出应用");
+                    app.exit(0);
+                }
+                other => log::warn!("收到未知托盘菜单项: {other}"),
             }
-            "quit" => app.exit(0),
-            _ => {}
         })
         .on_tray_icon_event(|tray, event| {
             if let TrayIconEvent::Click {
@@ -67,6 +76,7 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
             }
         })
         .build(app)?;
+    log::info!("系统托盘已初始化");
     Ok(())
 }
 

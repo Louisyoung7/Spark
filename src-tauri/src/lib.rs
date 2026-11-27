@@ -13,6 +13,7 @@
 
 mod config;
 mod hotkeys;
+mod logging;
 mod notes;
 mod paths;
 mod settings;
@@ -49,10 +50,17 @@ pub fn run() {
                     }),
                 ])
                 .level(tauri_plugin_log::log::LevelFilter::Info)
+                // 应用自身（含前端上报）记录 Debug，第三方依赖仍只记录 Info
+                .level_for("spark_lib", tauri_plugin_log::log::LevelFilter::Debug)
+                // 默认 40KB 单文件太小，轮转保留最近 5 个 2MB 文件
+                .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepSome(5))
+                .max_file_size(2 * 1024 * 1024)
+                .timezone_strategy(tauri_plugin_log::TimezoneStrategy::UseLocal)
                 .build(),
         )
         // single-instance 必须最先注册：第二实例唤起已有窗口后自行退出
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            log::info!("检测到第二实例，唤起已有窗口后退出");
             show_main_window(app);
         }))
         // 统一全局快捷键：X11 直接 grab，Wayland 走 XDG Portal
@@ -68,6 +76,10 @@ pub fn run() {
         ))
         .setup(|app| {
             log::info!("Spark v{} 启动", env!("CARGO_PKG_VERSION"));
+            match app.path().app_log_dir() {
+                Ok(dir) => log::info!("日志目录: {}", dir.display()),
+                Err(e) => log::warn!("获取日志目录失败: {e}"),
+            }
             app.manage(LastShownAt::default());
             app.manage(Resizing::default());
             app.manage(Capturing::default());
@@ -97,7 +109,10 @@ pub fn run() {
             WindowEvent::CloseRequested { api, .. } => {
                 // 关闭 = 隐藏，应用常驻后台，仅托盘「退出」可结束进程
                 api.prevent_close();
-                let _ = window.hide();
+                log::debug!("窗口 {} 请求关闭，转为隐藏", window.label());
+                if let Err(e) = window.hide() {
+                    log::warn!("隐藏窗口 {} 失败: {e}", window.label());
+                }
             }
             WindowEvent::Focused(true) => {
                 // 拖拽缩放结束后窗口重新聚焦，清除抑制标记
@@ -128,12 +143,16 @@ pub fn run() {
                     return;
                 }
                 if main_window_should_auto_hide(app) && window.is_visible().unwrap_or(false) {
-                    let _ = window.hide();
+                    log::debug!("速记窗口失焦，自动收起");
+                    if let Err(e) = window.hide() {
+                        log::warn!("失焦收起速记窗口失败: {e}");
+                    }
                 }
             }
             _ => {}
         })
         .invoke_handler(tauri::generate_handler![
+            logging::log_frontend,
             notes::save_note,
             notes::list_notes,
             notes::edit_note,
@@ -177,11 +196,19 @@ fn init_main_window(app: &mut tauri::App) {
     let Some(win) = app.get_webview_window(LABEL_MAIN) else {
         return;
     };
-    let _ = win.with_webview(|webview| {
+    if let Err(e) = win.with_webview(|webview| {
         use gtk::prelude::WidgetExt;
         webview.inner().set_size_request(1, 1);
-    });
-    let _ = win.set_maximizable(false);
-    let _ = win.set_min_size(Some(tauri::LogicalSize::new(WIN_MIN_W, WIN_MIN_H)));
-    let _ = win.set_size(tauri::LogicalSize::new(WIN_W, WIN_H));
+    }) {
+        log::warn!("重置 WebView 最小尺寸失败: {e}");
+    }
+    if let Err(e) = win.set_maximizable(false) {
+        log::warn!("禁用主窗口最大化失败: {e}");
+    }
+    if let Err(e) = win.set_min_size(Some(tauri::LogicalSize::new(WIN_MIN_W, WIN_MIN_H))) {
+        log::warn!("设置主窗口最小尺寸失败: {e}");
+    }
+    if let Err(e) = win.set_size(tauri::LogicalSize::new(WIN_W, WIN_H)) {
+        log::warn!("设置主窗口尺寸失败: {e}");
+    }
 }

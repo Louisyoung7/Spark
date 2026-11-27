@@ -135,8 +135,15 @@ fn verify_trash_line(
     if line == 0 || line > lines.len() {
         return Err("记录不存在".into());
     }
-    let record = parse_trash_line(&lines[line - 1]).ok_or_else(|| "记录不存在".to_string())?;
+    let record = parse_trash_line(&lines[line - 1]).ok_or_else(|| {
+        log::warn!("回收站第 {line} 行无法解析");
+        "记录不存在".to_string()
+    })?;
     if record.deleted_at != expected_deleted_at {
+        log::warn!(
+            "回收站第 {line} 行乐观校验失败：期望 {expected_deleted_at}，实际 {}",
+            record.deleted_at
+        );
         return Err("记录已变化，请刷新后重试".into());
     }
     Ok(record)
@@ -145,14 +152,23 @@ fn verify_trash_line(
 /// 追加一行并确保父目录存在。
 fn append_line(path: &Path, line: &str) -> Result<(), String> {
     if let Some(dir) = path.parent() {
-        fs::create_dir_all(dir).map_err(|e| format!("创建目录失败: {e}"))?;
+        fs::create_dir_all(dir).map_err(|e| {
+            log::error!("创建回收站目录失败（{}）: {e}", dir.display());
+            format!("创建目录失败: {e}")
+        })?;
     }
     let mut file = OpenOptions::new()
         .create(true)
         .append(true)
         .open(path)
-        .map_err(|e| format!("打开文件失败: {e}"))?;
-    writeln!(file, "{line}").map_err(|e| format!("写入失败: {e}"))
+        .map_err(|e| {
+            log::error!("打开回收站文件失败（{}）: {e}", path.display());
+            format!("打开文件失败: {e}")
+        })?;
+    writeln!(file, "{line}").map_err(|e| {
+        log::error!("写入回收站失败（{}）: {e}", path.display());
+        format!("写入失败: {e}")
+    })
 }
 
 /// 取一行笔记的时间；空行、损坏行或时间非法都返回 None。
@@ -208,10 +224,18 @@ pub fn delete_note(app: AppHandle, line: usize, expected_time: String) -> Result
     let deleted_at = Local::now().to_rfc3339_opts(SecondsFormat::Secs, false);
     let record = serde_json::json!({ "time": time, "content": content, "deleted_at": deleted_at })
         .to_string();
-    append_line(&trash_path, &record)?;
+    if let Err(e) = append_line(&trash_path, &record) {
+        log::error!("写入回收站失败（{}）: {e}", trash_path.display());
+        return Err(e);
+    }
 
     lines.remove(line - 1);
-    notes::write_lines_atomic(&notes_path, &lines)
+    let result = notes::write_lines_atomic(&notes_path, &lines);
+    match &result {
+        Ok(()) => log::info!("笔记第 {line} 行已移入回收站"),
+        Err(e) => log::error!("从笔记移除第 {line} 行失败: {e}"),
+    }
+    result
 }
 
 /// 列出回收站记录（最新删除在前），返回前先清理过期记录。
@@ -267,9 +291,15 @@ pub fn restore_trash_note(
             serde_json::json!({ "time": &record.time, "content": &record.content }).to_string();
         let merged = insert_note_line(&note_lines, &note, &record.time);
         if let Some(dir) = notes_path.parent() {
-            fs::create_dir_all(dir).map_err(|e| format!("创建目录失败: {e}"))?;
+            fs::create_dir_all(dir).map_err(|e| {
+                log::error!("创建笔记目录失败（{}）: {e}", dir.display());
+                format!("创建目录失败: {e}")
+            })?;
         }
         notes::write_lines_atomic(&notes_path, &merged)?;
+        log::info!("回收站第 {line} 行已恢复到笔记文件");
+    } else {
+        log::debug!("回收站第 {line} 行已存在，跳过恢复");
     }
 
     trash_lines.remove(line - 1);
@@ -302,7 +332,9 @@ pub fn empty_trash(app: AppHandle) -> Result<(), String> {
     if !path.exists() {
         return Ok(());
     }
-    notes::write_lines_atomic(&path, &[])
+    notes::write_lines_atomic(&path, &[])?;
+    log::info!("回收站已清空");
+    Ok(())
 }
 
 /// 启动时清理过期记录，避免应用长期驻留后台时回收站无限增长。

@@ -49,6 +49,7 @@ pub struct SettingsState(pub Mutex<AppSettings>);
 
 pub fn load_settings(app: &AppHandle) -> AppSettings {
     let Ok(path) = settings_path(app) else {
+        log::error!("无法解析设置文件路径，使用默认设置");
         return AppSettings::default();
     };
     if !path.exists() {
@@ -71,15 +72,31 @@ pub fn load_settings(app: &AppHandle) -> AppSettings {
 }
 
 pub fn save_settings(app: &AppHandle, s: &AppSettings) -> Result<(), String> {
-    let path = settings_path(app)?;
+    let path = settings_path(app).map_err(|e| {
+        log::error!("解析设置路径失败: {e}");
+        e
+    })?;
     if let Some(dir) = path.parent() {
-        fs::create_dir_all(dir).map_err(|e| format!("创建目录失败: {e}"))?;
+        fs::create_dir_all(dir).map_err(|e| {
+            log::error!("创建设置目录失败（{}）: {e}", dir.display());
+            format!("创建目录失败: {e}")
+        })?;
     }
-    let json = serde_json::to_string_pretty(s).map_err(|e| format!("序列化失败: {e}"))?;
+    let json = serde_json::to_string_pretty(s).map_err(|e| {
+        log::error!("序列化设置失败: {e}");
+        format!("序列化失败: {e}")
+    })?;
     // 临时文件 + 原子替换，避免写一半崩溃损坏配置
     let tmp = path.with_extension("json.tmp");
-    fs::write(&tmp, json).map_err(|e| format!("写入失败: {e}"))?;
-    fs::rename(&tmp, &path).map_err(|e| format!("替换失败: {e}"))?;
+    fs::write(&tmp, json).map_err(|e| {
+        log::error!("写入设置失败（{}）: {e}", tmp.display());
+        format!("写入失败: {e}")
+    })?;
+    fs::rename(&tmp, &path).map_err(|e| {
+        log::error!("替换设置文件失败（{}）: {e}", path.display());
+        format!("替换失败: {e}")
+    })?;
+    log::debug!("设置已写入 {}", path.display());
     Ok(())
 }
 
@@ -109,10 +126,16 @@ where
     F: FnOnce(&mut AppSettings),
 {
     let state = app.state::<SettingsState>();
-    let mut g = state.0.lock().map_err(|e| format!("锁定设置失败: {e}"))?;
+    let mut g = state.0.lock().map_err(|e| {
+        log::error!("锁定设置状态失败: {e}");
+        format!("锁定设置失败: {e}")
+    })?;
     let mut next = g.clone();
     mutate(&mut next);
-    save_then_commit(&mut *g, next, |s| save_settings(app, s))?;
+    save_then_commit(&mut *g, next, |s| save_settings(app, s)).map_err(|e| {
+        log::warn!("更新设置失败: {e}");
+        e
+    })?;
     Ok(g.clone())
 }
 
@@ -196,7 +219,10 @@ pub fn set_theme(app: AppHandle, theme: Option<String>) -> Result<(), String> {
         Some("light") => Some("light".to_string()),
         Some("dark") => Some("dark".to_string()),
         None | Some("system") => None,
-        Some(other) => return Err(format!("未知主题: {other}")),
+        Some(other) => {
+            log::warn!("收到未知主题值: {other}");
+            return Err(format!("未知主题: {other}"));
+        }
     };
     update(&app, |g| g.theme = stored)?;
     let mode = normalize_theme(theme.as_deref());
@@ -209,11 +235,18 @@ pub fn set_theme(app: AppHandle, theme: Option<String>) -> Result<(), String> {
 pub fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> {
     let autolaunch = app.autolaunch();
     if enabled {
-        autolaunch.enable().map_err(|e| format!("启用失败: {e}"))?;
+        autolaunch.enable().map_err(|e| {
+            log::error!("启用开机自启失败: {e}");
+            format!("启用失败: {e}")
+        })?;
     } else {
-        autolaunch.disable().map_err(|e| format!("禁用失败: {e}"))?;
+        autolaunch.disable().map_err(|e| {
+            log::error!("关闭开机自启失败: {e}");
+            format!("禁用失败: {e}")
+        })?;
     }
     update(&app, |g| g.autostart = enabled)?;
+    log::info!("开机自启已{}", if enabled { "启用" } else { "关闭" });
     Ok(())
 }
 
@@ -251,7 +284,11 @@ pub async fn pick_notes_path(app: AppHandle) -> Result<Option<String>, String> {
 #[tauri::command]
 pub fn set_notes_path(app: AppHandle, path: Option<String>) -> Result<(), String> {
     let new_path = path.map(PathBuf::from);
-    update(&app, |g| g.notes_path = new_path)?;
+    update(&app, |g| g.notes_path = new_path.clone())?;
+    match &new_path {
+        Some(p) => log::info!("笔记保存位置已改为 {}", p.display()),
+        None => log::info!("笔记保存位置已重置为默认"),
+    }
     Ok(())
 }
 
@@ -265,10 +302,20 @@ fn normalize_proxy(raw: Option<String>) -> Option<String> {
 pub fn set_proxy(app: AppHandle, proxy: Option<String>) -> Result<(), String> {
     let normalized = normalize_proxy(proxy);
     if let Some(url) = &normalized {
-        ureq::Proxy::new(url)
-            .map_err(|_| "代理地址无效，示例：http://127.0.0.1:7890".to_string())?;
+        ureq::Proxy::new(url).map_err(|_| {
+            log::warn!("拒绝无效代理地址");
+            "代理地址无效，示例：http://127.0.0.1:7890".to_string()
+        })?;
     }
-    update(&app, |g| g.proxy = normalized)?;
+    update(&app, |g| g.proxy = normalized.clone())?;
+    log::info!(
+        "更新检查代理已{}",
+        if normalized.is_some() {
+            "设置"
+        } else {
+            "清除"
+        }
+    );
     Ok(())
 }
 

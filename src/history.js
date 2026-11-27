@@ -7,10 +7,12 @@ import { listKeyCommands, saveCommands } from "./shared/editorCommands.js";
 import { createFlashStatus } from "./shared/feedback.js";
 import { LAST_SAVED_KEY } from "./shared/keys.js";
 import { enableWindowDragging } from "./shared/window.js";
+import { invoke, initFrontendLogging } from "./shared/log.js";
 
-const { invoke } = window.__TAURI__.core;
 const { getCurrentWindow } = window.__TAURI__.window;
 const { listen } = window.__TAURI__.event;
+
+initFrontendLogging();
 
 const appWindow = getCurrentWindow();
 

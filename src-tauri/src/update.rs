@@ -356,17 +356,24 @@ fn fetch_latest(
     {
         Ok(r) => r,
         // 还没有正式发布的 Release：按「无更新」处理
-        Err(ureq::Error::StatusCode(404)) => return Ok(None),
-        Err(ureq::Error::StatusCode(403)) => {
-            return Err("GitHub 接口请求过于频繁，请稍后再试".to_string())
+        Err(ureq::Error::StatusCode(404)) => {
+            log::info!("GitHub 尚无正式发布的 Release");
+            return Ok(None);
         }
-        Err(e) => return Err(format!("检查更新失败: {e}")),
+        Err(ureq::Error::StatusCode(403)) => {
+            log::warn!("GitHub 接口返回 403（可能触发速率限制）");
+            return Err("GitHub 接口请求过于频繁，请稍后再试".to_string());
+        }
+        Err(e) => {
+            log::error!("请求 GitHub Release 失败: {e}");
+            return Err(format!("检查更新失败: {e}"));
+        }
     };
 
-    let text = response
-        .body_mut()
-        .read_to_string()
-        .map_err(|e| format!("读取更新信息失败: {e}"))?;
+    let text = response.body_mut().read_to_string().map_err(|e| {
+        log::error!("读取 GitHub 响应失败: {e}");
+        format!("读取更新信息失败: {e}")
+    })?;
     parse_release_json(&text, current, kind)
 }
 
@@ -382,8 +389,13 @@ fn download_package(
     kind: InstallKind,
 ) -> Result<PathBuf, String> {
     if !validate_download_url(url) {
+        log::warn!("拒绝非本仓库下载地址: {url}");
         return Err("无效的下载地址".to_string());
     }
+    log::info!(
+        "开始下载更新包：{url}（期望 {} 字节）",
+        expected_size.unwrap_or(0)
+    );
 
     let agent = build_agent(version, proxy, DOWNLOAD_TIMEOUT)?;
     let mut response = agent
@@ -440,34 +452,50 @@ fn download_package(
     drop(file);
 
     if downloaded == 0 {
+        log::error!("下载结果为空: {}", path.display());
         let _ = fs::remove_file(&path);
         return Err("下载的安装包为空".to_string());
     }
     // 附件大小已知时校验，避免网络截断导致装坏包
     if let Some(expected) = expected_size.filter(|size| *size > 0) {
         if downloaded != expected {
+            log::error!("安装包大小校验失败：期望 {expected} 字节，实际 {downloaded} 字节");
             let _ = fs::remove_file(&path);
             return Err(format!(
                 "安装包大小不一致（期望 {expected} 字节，实际 {downloaded} 字节）"
             ));
         }
     }
+    log::info!("更新包下载完成：{}（{downloaded} 字节）", path.display());
     Ok(path)
 }
 
 /// 通过 pkexec 弹系统授权框执行安装命令。
 fn run_privileged(program: &str, args: &[&OsStr]) -> Result<(), String> {
+    log::info!(
+        "通过 pkexec 执行安装命令: {program}（{} 个参数）",
+        args.len()
+    );
     let output = Command::new("pkexec")
         .arg(program)
         .args(args)
         .output()
-        .map_err(|e| format!("无法启动系统授权程序: {e}"))?;
+        .map_err(|e| {
+            log::error!("启动 pkexec 失败: {e}");
+            format!("无法启动系统授权程序: {e}")
+        })?;
 
     if output.status.success() {
+        log::info!("安装命令执行成功: {program}");
         return Ok(());
     }
 
     let stderr = String::from_utf8_lossy(&output.stderr);
+    log::warn!(
+        "安装命令失败（{program}，退出码 {:?}）: {}",
+        output.status.code(),
+        stderr.trim()
+    );
     // 没有认证代理时 pkexec 会直接失败，转成可操作的提示
     if stderr
         .to_ascii_lowercase()
@@ -495,6 +523,7 @@ fn run_privileged(program: &str, args: &[&OsStr]) -> Result<(), String> {
 /// deb：apt 安装下载好的包
 fn install_deb(app: &AppHandle, path: &Path) -> Result<(), String> {
     emit_installing(app);
+    log::info!("安装 deb 包: {}", path.display());
     run_privileged(
         "env",
         &[
@@ -510,6 +539,7 @@ fn install_deb(app: &AppHandle, path: &Path) -> Result<(), String> {
 /// rpm：按系统里的包管理器选择 dnf 或 zypper
 fn install_rpm(app: &AppHandle, path: &Path) -> Result<(), String> {
     emit_installing(app);
+    log::info!("安装 rpm 包: {}", path.display());
     if command_exists("dnf") {
         return run_privileged(
             "dnf",
@@ -536,7 +566,15 @@ fn install_appimage(app: &AppHandle, downloaded: &Path) -> Result<PathBuf, Strin
     emit_progress(app, "replacing");
     let target = std::env::var_os("APPIMAGE")
         .map(PathBuf::from)
-        .ok_or_else(|| "未找到 AppImage 路径，请手动下载替换".to_string())?;
+        .ok_or_else(|| {
+            log::error!("缺少 APPIMAGE 环境变量，无法替换 AppImage");
+            "未找到 AppImage 路径，请手动下载替换".to_string()
+        })?;
+    log::info!(
+        "替换 AppImage: {} → {}",
+        downloaded.display(),
+        target.display()
+    );
 
     // 先复制到同目录再原子替换，避免跨文件系统 rename 失败
     let mut tmp = target.clone().into_os_string();
@@ -546,6 +584,7 @@ fn install_appimage(app: &AppHandle, downloaded: &Path) -> Result<PathBuf, Strin
     fs::set_permissions(&tmp, fs::Permissions::from_mode(0o755))
         .map_err(|e| format!("设置可执行权限失败: {e}"))?;
     if let Err(e) = fs::rename(&tmp, &target) {
+        log::error!("替换 AppImage 失败（{}）: {e}", target.display());
         let _ = fs::remove_file(&tmp);
         return Err(format!("替换 AppImage 失败（目录可能不可写）: {e}"));
     }
@@ -587,6 +626,7 @@ async fn run_download_and_install(app: &AppHandle) -> Result<(), String> {
 
     // deb/rpm 依赖 pkexec 弹授权框，没有代理就不必白下载
     if kind != InstallKind::AppImage && !polkit_agent_running() {
+        log::warn!("未检测到 polkit 认证代理，放弃应用内安装");
         return Err("未检测到 polkit 认证代理，无法在应用内安装，请从发布页手动下载".to_string());
     }
 
@@ -617,6 +657,7 @@ async fn run_download_and_install(app: &AppHandle) -> Result<(), String> {
     };
 
     let url = info.download_url.clone().ok_or_else(|| {
+        log::warn!("版本 {} 没有 {:?} 安装包", info.latest, kind);
         format!(
             "该版本没有提供 {} 安装包，请从发布页手动下载",
             kind.extension()
@@ -771,10 +812,12 @@ pub async fn download_and_install_update(app: AppHandle) -> Result<(), String> {
 
 async fn check_update_inner(app: AppHandle, force: bool) -> Result<Option<UpdateInfo>, String> {
     let current = app.package_info().version.to_string();
+    log::info!("开始检查更新：当前 {current}，强制={force}");
 
     if !force {
         let last = settings::snapshot(&app).last_update_check;
         if !should_check(last, now_epoch(), CHECK_INTERVAL_SECS) {
+            log::debug!("距上次检查不足 24 小时，使用缓存结果");
             return Ok(cached_info(&app, &current));
         }
     }
@@ -795,6 +838,7 @@ async fn check_update_inner(app: AppHandle, force: bool) -> Result<Option<Update
     let current_for_request = current.clone();
     // 显式配置的代理优先；未配置时 fetch_latest 读取环境变量
     let proxy = settings::snapshot(&app).proxy;
+    let proxy_configured = proxy.is_some();
     let kind = detect_install_kind();
     let joined = tauri::async_runtime::spawn_blocking(move || {
         fetch_latest(&current_for_request, proxy.as_deref(), kind)
@@ -828,6 +872,22 @@ async fn check_update_inner(app: AppHandle, force: bool) -> Result<Option<Update
         log::warn!("保存更新检查缓存失败: {e}");
     }
 
+    match &checked {
+        Ok(Some(info)) => log::info!(
+            "检查完成：最新 {}，当前 {}，代理={}，安装形态={:?}",
+            info.latest,
+            info.current,
+            if proxy_configured {
+                "已配置"
+            } else {
+                "环境变量"
+            },
+            kind
+        ),
+        Ok(None) => log::debug!("检查完成：没有可用 Release"),
+        Err(e) => log::warn!("检查更新失败: {e}"),
+    }
+
     match checked {
         Ok(Some(mut info)) => {
             info.checked_at = now_epoch();
@@ -858,11 +918,14 @@ async fn check_update_inner(app: AppHandle, force: bool) -> Result<Option<Update
 #[tauri::command]
 pub fn open_release_page(app: AppHandle, url: String) -> Result<(), String> {
     if !validate_release_url(&url) {
+        log::warn!("拒绝打开非本仓库地址: {url}");
         return Err("无效的下载地址".to_string());
     }
-    app.opener()
-        .open_url(url, None::<&str>)
-        .map_err(|e| format!("打开下载页失败: {e}"))
+    log::info!("打开发布页: {url}");
+    app.opener().open_url(url, None::<&str>).map_err(|e| {
+        log::error!("打开发布页失败: {e}");
+        format!("打开下载页失败: {e}")
+    })
 }
 
 // ---------- 启动检查 ----------

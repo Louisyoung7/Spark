@@ -4,10 +4,12 @@ import { listKeyCommands, saveCommands } from "./shared/editorCommands.js";
 import { createFlashStatus } from "./shared/feedback.js";
 import { DRAFT_KEY, LAST_SAVED_KEY } from "./shared/keys.js";
 import { enableWindowDragging } from "./shared/window.js";
+import { invoke, initFrontendLogging, logWarn } from "./shared/log.js";
 
-const { invoke } = window.__TAURI__.core;
 const { getCurrentWindow } = window.__TAURI__.window;
 const { listen } = window.__TAURI__.event;
+
+initFrontendLogging();
 
 const appWindow = getCurrentWindow();
 
@@ -40,7 +42,8 @@ async function refreshHotkeyHint() {
     const s = await invoke("get_settings");
     hotkeyHint.textContent = `${s.hotkey_main} 速记 · ${s.hotkey_history} 历史 · Esc 收起`;
     if (emptyHotkey) emptyHotkey.textContent = s.hotkey_main;
-  } catch {
+  } catch (err) {
+    logWarn(`读取快捷键提示失败: ${err}`);
     hotkeyHint.textContent = DEFAULT_HINT;
   }
 }
@@ -270,7 +273,10 @@ fullscreenBtn.addEventListener("click", toggleFullscreen);
 
 // 启动时同步一次（例如上次退出时是全屏状态）
 window.addEventListener("DOMContentLoaded", async () => {
-  fullscreen = await appWindow.isFullscreen().catch(() => false);
+  fullscreen = await appWindow.isFullscreen().catch((err) => {
+    logWarn(`读取全屏状态失败: ${err}`);
+    return false;
+  });
   document.body.classList.toggle("fullscreen", fullscreen);
   fullscreenBtn.textContent = fullscreen ? "⤡" : "⛶";
 });

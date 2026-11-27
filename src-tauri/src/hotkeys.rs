@@ -25,14 +25,17 @@ pub struct Capturing(pub Mutex<bool>);
 /// - Err：快捷键字符串无法解析 / 已被占用等真实失败
 pub fn rebind(app: &AppHandle) -> Result<bool, String> {
     if is_wayland() {
+        log::debug!("Wayland 下快捷键不支持热更，跳过重新绑定");
         return Ok(false);
     }
     use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
     let gs = app.global_shortcut();
     // 清掉启动时经 desktop-integration 注册的旧绑定，再按新设置重新注册
-    gs.unregister_all()
-        .map_err(|e| format!("清理旧快捷键失败: {e}"))?;
+    gs.unregister_all().map_err(|e| {
+        log::error!("清理旧快捷键失败: {e}");
+        format!("清理旧快捷键失败: {e}")
+    })?;
 
     let s = settings::snapshot(app);
     let hk_main = effective_hotkey(s.hotkey_main.clone(), HOTKEY_MAIN);
@@ -44,7 +47,10 @@ pub fn rebind(app: &AppHandle) -> Result<bool, String> {
             toggle_main_window(&handle_main);
         }
     })
-    .map_err(|e| format!("快捷键「{hk_main}」无效或已被占用: {e}"))?;
+    .map_err(|e| {
+        log::error!("注册速记快捷键「{hk_main}」失败: {e}");
+        format!("快捷键「{hk_main}」无效或已被占用: {e}")
+    })?;
 
     let handle_history = app.clone();
     gs.on_shortcut(hk_history.as_str(), move |_app, _shortcut, event| {
@@ -52,8 +58,12 @@ pub fn rebind(app: &AppHandle) -> Result<bool, String> {
             toggle_history_window(&handle_history);
         }
     })
-    .map_err(|e| format!("快捷键「{hk_history}」无效或已被占用: {e}"))?;
+    .map_err(|e| {
+        log::error!("注册历史快捷键「{hk_history}」失败: {e}");
+        format!("快捷键「{hk_history}」无效或已被占用: {e}")
+    })?;
 
+    log::info!("快捷键已重新绑定：速记 {hk_main}，历史 {hk_history}");
     Ok(true)
 }
 
@@ -61,6 +71,12 @@ pub fn rebind(app: &AppHandle) -> Result<bool, String> {
 pub fn register_on_startup(app: &AppHandle) {
     let snapshot = settings::snapshot(app);
     let handle = app.clone();
+    log::info!(
+        "启动注册快捷键：速记 {}，历史 {}，Wayland={}",
+        effective_hotkey(snapshot.hotkey_main.clone(), HOTKEY_MAIN),
+        effective_hotkey(snapshot.hotkey_history.clone(), HOTKEY_HISTORY),
+        is_wayland()
+    );
 
     let cb_main = handle.clone();
     let hk_main = effective_hotkey(snapshot.hotkey_main.clone(), HOTKEY_MAIN);
@@ -107,6 +123,7 @@ pub fn set_hotkeys(
     // 两个窗口的快捷键不能相同，否则后者会注册失败
     if let (Some(a), Some(b)) = (&hk_main, &hk_history) {
         if a.eq_ignore_ascii_case(b) {
+            log::warn!("拒绝相同快捷键配置: {a}");
             return Err("两个快捷键不能相同".into());
         }
     }
@@ -129,11 +146,16 @@ pub fn set_hotkeys(
         }),
         Err(e) => {
             // 回滚并恢复旧绑定，保证应用始终有可用快捷键
-            let _ = settings::update(&app, |g| {
+            log::warn!("快捷键更新失败，开始回滚: {e}");
+            if let Err(rollback) = settings::update(&app, |g| {
                 g.hotkey_main = prev.hotkey_main.clone();
                 g.hotkey_history = prev.hotkey_history.clone();
-            });
-            let _ = rebind(&app);
+            }) {
+                log::error!("回滚快捷键设置失败: {rollback}");
+            }
+            if let Err(rollback) = rebind(&app) {
+                log::error!("恢复旧快捷键绑定失败: {rollback}");
+            }
             Err(e)
         }
     }
@@ -148,10 +170,12 @@ pub fn begin_hotkey_capture(app: AppHandle) -> Result<(), String> {
         return Ok(());
     }
     use tauri_plugin_global_shortcut::GlobalShortcutExt;
-    app.global_shortcut()
-        .unregister_all()
-        .map_err(|e| format!("暂停快捷键失败: {e}"))?;
+    app.global_shortcut().unregister_all().map_err(|e| {
+        log::error!("录制前暂停快捷键失败: {e}");
+        format!("暂停快捷键失败: {e}")
+    })?;
     set_capturing(&app, true);
+    log::debug!("进入快捷键录制模式，全局快捷键已暂停");
     Ok(())
 }
 

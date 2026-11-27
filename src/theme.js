@@ -5,8 +5,8 @@
 // Linux 上 Tauri 的 window.theme()/onThemeChanged 受 xdg portal 限制不可靠。
 
 import { THEME_CACHE_KEY } from "./shared/keys.js";
+import { invoke, logWarn } from "./shared/log.js";
 
-const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 const MODES = new Set(["light", "dark", "system"]);
 const darkQuery = window.matchMedia("(prefers-color-scheme: dark)");
@@ -92,7 +92,8 @@ export async function initTheme() {
   try {
     const settings = await invoke("get_settings");
     currentMode = normalize(settings.theme);
-  } catch {
+  } catch (err) {
+    logWarn(`读取主题设置失败: ${err}`);
     currentMode = "system";
   }
   paint(currentMode);

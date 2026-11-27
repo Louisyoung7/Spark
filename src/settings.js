@@ -1,10 +1,12 @@
 import { initTheme, setTheme } from "./theme.js";
 import { createFlashStatus } from "./shared/feedback.js";
 import { enableWindowDragging } from "./shared/window.js";
+import { invoke, initFrontendLogging, logWarn } from "./shared/log.js";
 
-const { invoke } = window.__TAURI__.core;
 const { getCurrentWindow } = window.__TAURI__.window;
 const { listen } = window.__TAURI__.event;
+
+initFrontendLogging();
 
 const appWindow = getCurrentWindow();
 
@@ -259,13 +261,15 @@ async function load() {
   try {
     // 每次打开设置页都重新检测，用户可能刚启动了认证代理
     capability = await invoke("get_update_capability");
-  } catch {
+  } catch (err) {
+    logWarn(`检测更新安装能力失败: ${err}`);
     // 检测失败时维持默认，避免误阻断
   }
   try {
     // 打开设置页时立即渲染缓存结果，避免依赖事件时序
     renderUpdate(await invoke("get_update_status"));
-  } catch {
+  } catch (err) {
+    logWarn(`读取更新缓存失败: ${err}`);
     renderUpdate(null);
   }
 }

@@ -117,25 +117,40 @@ pub fn show_main_window(app: &AppHandle) {
             *g = Some(Instant::now());
         }
     }
+    log::debug!("显示速记窗口");
     if win.is_minimized().unwrap_or(false) {
-        let _ = win.unminimize();
+        if let Err(e) = win.unminimize() {
+            log::warn!("取消速记窗口最小化失败: {e}");
+        }
     }
     match position_near_cursor(app) {
         Some(pos) => {
-            let _ = win.set_position(pos);
+            if let Err(e) = win.set_position(pos) {
+                log::warn!("定位速记窗口到鼠标附近失败，回退居中: {e}");
+                if let Err(e) = win.center() {
+                    log::warn!("速记窗口居中失败: {e}");
+                }
+            }
         }
         None => {
-            let _ = win.center();
+            log::debug!("无法定位到鼠标附近，速记窗口居中显示");
+            if let Err(e) = win.center() {
+                log::warn!("速记窗口居中失败: {e}");
+            }
         }
     }
-    let _ = win.show();
+    if let Err(e) = win.show() {
+        log::error!("显示速记窗口失败: {e}");
+    }
     // X11: 盖 _NET_WM_USER_TIME 时间戳并 gtk present_with_time，
     // 让窗口管理器把弹窗当作用户驱动的激活（拿到焦点）；Wayland: 无操作
     app.request_desktop_activation_assist(&win, "spark-show", LABEL_MAIN);
     // Wayland: 首次窗口可见后触发 Portal BindShortcuts（X11 下 no-op，幂等）
     app.set_shortcut_window(&win);
     // 通知前端聚焦输入框（DOM 焦点兜底）
-    let _ = app.emit("focus-input", ());
+    if let Err(e) = app.emit("focus-input", ()) {
+        log::warn!("通知前端聚焦输入框失败: {e}");
+    }
 }
 
 /// 快捷键 / 托盘触发的 toggle：已显示 → 重新聚焦；隐藏 → 显示。
@@ -144,9 +159,14 @@ pub fn toggle_main_window(app: &AppHandle) {
         return;
     };
     if win.is_visible().unwrap_or(false) {
+        log::debug!("速记窗口已显示，重新聚焦");
         app.request_desktop_activation_assist(&win, "spark-refocus", LABEL_MAIN);
-        let _ = win.set_focus();
-        let _ = app.emit("focus-input", ());
+        if let Err(e) = win.set_focus() {
+            log::warn!("重新聚焦速记窗口失败: {e}");
+        }
+        if let Err(e) = app.emit("focus-input", ()) {
+            log::warn!("通知前端聚焦输入框失败: {e}");
+        }
     } else {
         show_main_window(app);
     }
@@ -157,13 +177,22 @@ pub fn show_history_window(app: &AppHandle) {
     let Some(win) = app.get_webview_window(LABEL_HISTORY) else {
         return;
     };
+    log::debug!("显示历史窗口");
     if win.is_minimized().unwrap_or(false) {
-        let _ = win.unminimize();
+        if let Err(e) = win.unminimize() {
+            log::warn!("取消历史窗口最小化失败: {e}");
+        }
     }
-    let _ = win.show();
+    if let Err(e) = win.show() {
+        log::error!("显示历史窗口失败: {e}");
+    }
     app.request_desktop_activation_assist(&win, "spark-history-show", LABEL_HISTORY);
-    let _ = win.set_focus();
-    let _ = app.emit("reload-history", ());
+    if let Err(e) = win.set_focus() {
+        log::warn!("聚焦历史窗口失败: {e}");
+    }
+    if let Err(e) = app.emit("reload-history", ()) {
+        log::warn!("通知历史窗口刷新失败: {e}");
+    }
 }
 
 /// 历史窗口 toggle：已显示 → 隐藏；隐藏 → 显示。
@@ -172,7 +201,10 @@ pub fn toggle_history_window(app: &AppHandle) {
         return;
     };
     if win.is_visible().unwrap_or(false) {
-        let _ = win.hide();
+        log::debug!("隐藏历史窗口");
+        if let Err(e) = win.hide() {
+            log::warn!("隐藏历史窗口失败: {e}");
+        }
     } else {
         show_history_window(app);
     }
@@ -183,13 +215,22 @@ pub fn show_settings_window(app: &AppHandle) {
     let Some(win) = app.get_webview_window(LABEL_SETTINGS) else {
         return;
     };
+    log::debug!("显示设置窗口");
     if win.is_minimized().unwrap_or(false) {
-        let _ = win.unminimize();
+        if let Err(e) = win.unminimize() {
+            log::warn!("取消设置窗口最小化失败: {e}");
+        }
     }
-    let _ = win.show();
+    if let Err(e) = win.show() {
+        log::error!("显示设置窗口失败: {e}");
+    }
     app.request_desktop_activation_assist(&win, "spark-settings-show", LABEL_SETTINGS);
-    let _ = win.set_focus();
-    let _ = app.emit("reload-settings", ());
+    if let Err(e) = win.set_focus() {
+        log::warn!("聚焦设置窗口失败: {e}");
+    }
+    if let Err(e) = app.emit("reload-settings", ()) {
+        log::warn!("通知设置窗口刷新失败: {e}");
+    }
 }
 
 /// 设置窗口 toggle：已显示 → 隐藏；隐藏 → 显示。
@@ -198,7 +239,10 @@ pub fn toggle_settings_window(app: &AppHandle) {
         return;
     };
     if win.is_visible().unwrap_or(false) {
-        let _ = win.hide();
+        log::debug!("隐藏设置窗口");
+        if let Err(e) = win.hide() {
+            log::warn!("隐藏设置窗口失败: {e}");
+        }
     } else {
         show_settings_window(app);
     }

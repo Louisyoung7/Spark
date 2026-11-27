@@ -53,7 +53,10 @@ pub struct ImportResult {
 /// 按物理行读取文件。列表、编辑、删除都必须基于同一套行号，
 /// 否则文件中出现空行或损坏行时，前端拿到的 id 会指向错误记录。
 pub(crate) fn read_lines(path: &Path) -> Result<Vec<String>, String> {
-    let text = fs::read_to_string(path).map_err(|e| format!("读取文件失败: {e}"))?;
+    let text = fs::read_to_string(path).map_err(|e| {
+        log::error!("读取文件失败（{}）: {e}", path.display());
+        format!("读取文件失败: {e}")
+    })?;
     Ok(text.lines().map(|l| l.to_string()).collect())
 }
 
@@ -72,7 +75,10 @@ fn sibling_path(path: &Path, suffix: &str) -> Result<PathBuf, String> {
 pub(crate) fn write_lines_atomic(path: &Path, lines: &[String]) -> Result<(), String> {
     if path.exists() {
         let backup = sibling_path(path, ".bak")?;
-        fs::copy(path, &backup).map_err(|e| format!("备份原文件失败: {e}"))?;
+        fs::copy(path, &backup).map_err(|e| {
+            log::error!("备份原文件失败（{}）: {e}", backup.display());
+            format!("备份原文件失败: {e}")
+        })?;
     }
     let tmp = sibling_path(path, ".tmp")?;
     let body = if lines.is_empty() {
@@ -80,8 +86,15 @@ pub(crate) fn write_lines_atomic(path: &Path, lines: &[String]) -> Result<(), St
     } else {
         format!("{}\n", lines.join("\n"))
     };
-    fs::write(&tmp, body).map_err(|e| format!("写入临时文件失败: {e}"))?;
-    fs::rename(&tmp, path).map_err(|e| format!("替换文件失败: {e}"))?;
+    fs::write(&tmp, body).map_err(|e| {
+        log::error!("写入临时文件失败（{}）: {e}", tmp.display());
+        format!("写入临时文件失败: {e}")
+    })?;
+    fs::rename(&tmp, path).map_err(|e| {
+        log::error!("原子替换文件失败（{}）: {e}", path.display());
+        format!("替换文件失败: {e}")
+    })?;
+    log::debug!("原子写入 {} 行到 {}", lines.len(), path.display());
     Ok(())
 }
 
@@ -94,10 +107,16 @@ pub fn save_note(app: AppHandle, content: String) -> Result<(), String> {
         return Err("内容为空".into());
     }
 
-    let path = settings::notes_path(&app)?;
+    let path = settings::notes_path(&app).map_err(|e| {
+        log::error!("解析笔记路径失败: {e}");
+        e
+    })?;
     let _guard = lock_notes();
     if let Some(dir) = path.parent() {
-        fs::create_dir_all(dir).map_err(|e| format!("创建目录失败: {e}"))?;
+        fs::create_dir_all(dir).map_err(|e| {
+            log::error!("创建笔记目录失败（{}）: {e}", dir.display());
+            format!("创建目录失败: {e}")
+        })?;
     }
 
     let time = chrono::Local::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, false);
@@ -107,15 +126,25 @@ pub fn save_note(app: AppHandle, content: String) -> Result<(), String> {
         .create(true)
         .append(true)
         .open(&path)
-        .map_err(|e| format!("打开文件失败: {e}"))?;
-    writeln!(file, "{line}").map_err(|e| format!("写入失败: {e}"))?;
+        .map_err(|e| {
+            log::error!("打开笔记文件失败（{}）: {e}", path.display());
+            format!("打开文件失败: {e}")
+        })?;
+    writeln!(file, "{line}").map_err(|e| {
+        log::error!("写入笔记失败（{}）: {e}", path.display());
+        format!("写入失败: {e}")
+    })?;
+    log::info!("已保存笔记 {} 字节到 {}", content.len(), path.display());
     Ok(())
 }
 
 /// 读取全部笔记，按最新在前返回。
 #[tauri::command]
 pub fn list_notes(app: AppHandle) -> Result<Vec<NoteEntry>, String> {
-    let path = settings::notes_path(&app)?;
+    let path = settings::notes_path(&app).map_err(|e| {
+        log::error!("解析笔记路径失败: {e}");
+        e
+    })?;
     // 与追加 / 替换写共用同一把锁，避免读到写到一半的文件
     let _guard = lock_notes();
     if !path.exists() {
@@ -124,6 +153,7 @@ pub fn list_notes(app: AppHandle) -> Result<Vec<NoteEntry>, String> {
     let lines = read_lines(&path)?;
 
     let mut notes = Vec::new();
+    let mut skipped = Vec::new();
     for (idx, line) in lines.iter().enumerate() {
         let line = line.trim();
         if line.is_empty() {
@@ -131,6 +161,7 @@ pub fn list_notes(app: AppHandle) -> Result<Vec<NoteEntry>, String> {
         }
         // 单行损坏时跳过该行，不影响其余记录展示
         let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            skipped.push(idx + 1);
             continue;
         };
         notes.push(NoteEntry {
@@ -147,6 +178,14 @@ pub fn list_notes(app: AppHandle) -> Result<Vec<NoteEntry>, String> {
                 .to_string(),
         });
     }
+    if !skipped.is_empty() {
+        log::warn!(
+            "笔记文件有 {} 行无法解析，已跳过: {:?}",
+            skipped.len(),
+            skipped
+        );
+    }
+    log::debug!("读取笔记 {} 条", notes.len());
     notes.reverse(); // 最新在前
     Ok(notes)
 }
@@ -159,6 +198,7 @@ pub async fn save_image(
     default_name: String,
 ) -> Result<Option<String>, String> {
     if data.is_empty() {
+        log::warn!("收到空的图片数据，取消导出");
         return Err("图片数据为空".into());
     }
     let start_dir = app
@@ -176,9 +216,14 @@ pub async fn save_image(
             dlg = dlg.set_directory(dir);
         }
         let Some(path) = dlg.save_file() else {
+            log::debug!("用户取消图片保存");
             return Ok::<_, String>(None);
         };
-        fs::write(&path, &data).map_err(|e| format!("写入图片失败: {e}"))?;
+        fs::write(&path, &data).map_err(|e| {
+            log::error!("写入图片失败（{}）: {e}", path.display());
+            format!("写入图片失败: {e}")
+        })?;
+        log::info!("图片已保存到 {}", path.display());
         Ok(Some(path.to_string_lossy().to_string()))
     })
     .await
@@ -201,13 +246,16 @@ pub(crate) fn verify_line(
     if target.is_empty() {
         return Err("记录不存在".into());
     }
-    let existing = serde_json::from_str::<serde_json::Value>(target)
-        .map_err(|e| format!("记录解析失败: {e}"))?;
+    let existing = serde_json::from_str::<serde_json::Value>(target).map_err(|e| {
+        log::warn!("第 {line} 行记录解析失败: {e}");
+        format!("记录解析失败: {e}")
+    })?;
     let time = existing
         .get("time")
         .and_then(|t| t.as_str())
         .unwrap_or_default();
     if time != expected_time {
+        log::warn!("第 {line} 行乐观校验失败：期望 {expected_time}，实际 {time}");
         return Err("记录已变化，请刷新后重试".into());
     }
     Ok(time.to_string())
@@ -226,7 +274,10 @@ pub fn edit_note(
         return Err("内容为空".into());
     }
 
-    let path = settings::notes_path(&app)?;
+    let path = settings::notes_path(&app).map_err(|e| {
+        log::error!("解析笔记路径失败: {e}");
+        e
+    })?;
     let _guard = lock_notes();
     if !path.exists() {
         return Err("记录不存在".into());
@@ -238,6 +289,7 @@ pub fn edit_note(
     lines[line - 1] = serde_json::json!({ "time": time, "content": content }).to_string();
 
     write_lines_atomic(&path, &lines)?;
+    log::info!("笔记第 {line} 行已更新");
     Ok(())
 }
 
@@ -283,8 +335,12 @@ fn merge_import(existing: &[String], imported_text: &str) -> (Vec<String>, Impor
 /// 导出当前笔记文件到用户选择的位置，返回目标路径；用户取消时返回 None。
 #[tauri::command]
 pub async fn export_notes(app: AppHandle) -> Result<Option<String>, String> {
-    let path = settings::notes_path(&app)?;
+    let path = settings::notes_path(&app).map_err(|e| {
+        log::error!("解析笔记路径失败: {e}");
+        e
+    })?;
     if !path.exists() {
+        log::warn!("导出失败：笔记文件不存在（{}）", path.display());
         return Err("暂无可导出的笔记".into());
     }
 
@@ -314,11 +370,20 @@ pub async fn export_notes(app: AppHandle) -> Result<Option<String>, String> {
         if dest == path
             || (dest.exists() && fs::canonicalize(&dest).ok() == fs::canonicalize(&path).ok())
         {
+            log::warn!("拒绝把笔记备份到源文件 {}", dest.display());
             return Err("不能覆盖正在使用的笔记文件".into());
         }
 
         let _guard = lock_notes();
-        fs::copy(&path, &dest).map_err(|e| format!("写入备份失败: {e}"))?;
+        fs::copy(&path, &dest).map_err(|e| {
+            log::error!(
+                "导出备份失败（{} → {}）: {e}",
+                path.display(),
+                dest.display()
+            );
+            format!("写入备份失败: {e}")
+        })?;
+        log::info!("笔记已备份到 {}", dest.display());
         Ok(Some(dest.to_string_lossy().to_string()))
     })
     .await
@@ -328,7 +393,10 @@ pub async fn export_notes(app: AppHandle) -> Result<Option<String>, String> {
 /// 从用户选择的 JSONL 备份合并导入笔记，返回统计；用户取消时返回 None。
 #[tauri::command]
 pub async fn import_notes(app: AppHandle) -> Result<Option<ImportResult>, String> {
-    let path = settings::notes_path(&app)?;
+    let path = settings::notes_path(&app).map_err(|e| {
+        log::error!("解析笔记路径失败: {e}");
+        e
+    })?;
     let start_dir = app
         .path()
         .download_dir()
@@ -344,9 +412,14 @@ pub async fn import_notes(app: AppHandle) -> Result<Option<ImportResult>, String
             dlg = dlg.set_directory(dir);
         }
         let Some(src) = dlg.pick_file() else {
+            log::debug!("用户取消导入");
             return Ok::<_, String>(None);
         };
-        let text = fs::read_to_string(&src).map_err(|e| format!("读取备份失败: {e}"))?;
+        log::info!("开始导入备份 {}", src.display());
+        let text = fs::read_to_string(&src).map_err(|e| {
+            log::error!("读取备份失败（{}）: {e}", src.display());
+            format!("读取备份失败: {e}")
+        })?;
 
         let _guard = lock_notes();
         let existing = if path.exists() {
@@ -366,6 +439,14 @@ pub async fn import_notes(app: AppHandle) -> Result<Option<ImportResult>, String
     .await
     .map_err(|e| format!("导入失败: {e}"))??;
 
+    if let Some(r) = &result {
+        log::info!(
+            "导入完成：新增 {}、跳过 {}、重复 {}",
+            r.imported,
+            r.skipped,
+            r.duplicates
+        );
+    }
     if result.as_ref().is_some_and(|r| r.imported > 0) {
         let _ = app.emit("reload-history", ());
     }
